@@ -271,3 +271,24 @@ $$ language plpgsql;
 create trigger trg_profiles_updated_at
   before update on public.profiles
   for each row execute function public.set_updated_at();
+
+-- ============================================================================
+-- STORAGE — políticas do bucket privado "invoice-pdfs" (criado manualmente
+-- no painel, ver README). Sem isso, upload do client falha com
+-- "new row violates row-level security policy": buckets privados negam tudo
+-- por padrão até existir uma policy em storage.objects. Convenção: cada
+-- arquivo fica em `<user_id>/<nome>`, então a policy só libera a própria pasta.
+-- ============================================================================
+create policy "invoice_pdfs_owner_insert" on storage.objects
+  for insert
+  with check (
+    bucket_id = 'invoice-pdfs'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+create policy "invoice_pdfs_owner_select" on storage.objects
+  for select
+  using (
+    bucket_id = 'invoice-pdfs'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
