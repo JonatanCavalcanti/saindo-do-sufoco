@@ -463,7 +463,11 @@ function NovoCartaoForm({
 export default function CreditCardManager({ initialCards }: { initialCards: Card[] }) {
   const router = useRouter();
   const showToast = useToast();
-  const [cards] = useState<Card[]>(initialCards);
+  // Sem useState: `cards` deve refletir sempre o prop mais recente do
+  // Server Component. Guardar em useState(initialCards) travava a lista no
+  // valor do primeiro carregamento — novos cartões/compras só apareciam
+  // depois de um reload completo, mesmo com router.refresh() rodando.
+  const cards = initialCards;
   const [formOpenFor, setFormOpenFor] = useState<Card | null>(null);
   const [newCardFormOpen, setNewCardFormOpen] = useState(false);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
