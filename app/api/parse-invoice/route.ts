@@ -111,6 +111,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ bank, items });
   } catch (err: any) {
+    console.error("Erro em /api/parse-invoice:", err?.message, err?.stack);
     const message = err?.message?.includes("password")
       ? "PDF protegido por senha incorreta ou não informada."
       : "Erro ao processar o PDF.";
