@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes slideUp {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+html,
+body {
+  overscroll-behavior-y: contain; /* comportamento mais "nativo" em PWA mobile */
+}
+
+/* Foco visível para acessibilidade de teclado, mesmo em componentes customizados */
+:focus-visible {
+  outline: 2px solid #4c6b58;
+  outline-offset: 2px;
+}
