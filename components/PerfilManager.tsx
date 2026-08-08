@@ -73,11 +73,22 @@ export default function PerfilManager({
   const router = useRouter();
   const supabase = createClient();
 
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    router.push("/login");
+    router.refresh();
+  }
+
   return (
     <main className="min-h-screen bg-base-50 pb-24 px-5 pt-8">
       <div className="flex items-center justify-between mb-1">
         <h1 className="font-display text-2xl text-ink-900">Perfil</h1>
-        <LogoutButton />
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-1 text-ink-400 font-body text-xs font-semibold"
+        >
+          <LogOut size={14} /> Sair
+        </button>
       </div>
       <p className="font-body text-sm text-ink-400 mb-5">{email}</p>
 
@@ -86,22 +97,6 @@ export default function PerfilManager({
       <DividasExternasSection debts={externalDebts} />
     </main>
   );
-
-  function LogoutButton() {
-    async function handleLogout() {
-      await supabase.auth.signOut();
-      router.push("/login");
-      router.refresh();
-    }
-    return (
-      <button
-        onClick={handleLogout}
-        className="flex items-center gap-1 text-ink-400 font-body text-xs font-semibold"
-      >
-        <LogOut size={14} /> Sair
-      </button>
-    );
-  }
 }
 
 // ---------------------------------------------------------------------------
