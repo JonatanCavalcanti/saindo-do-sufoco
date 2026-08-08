@@ -105,6 +105,26 @@ export default function ImportarFaturaPage() {
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)));
   }
 
+  async function handleCancel() {
+    if (pdfImportId) {
+      const { data: importRow } = await supabase
+        .from("pdf_imports")
+        .select("storage_path")
+        .eq("id", pdfImportId)
+        .maybeSingle();
+      if (importRow?.storage_path) {
+        await supabase.storage.from("invoice-pdfs").remove([importRow.storage_path]);
+      }
+      await supabase.from("pdf_imports").delete().eq("id", pdfImportId);
+    }
+    setItems([]);
+    setFiles([]);
+    setPdfImportId(null);
+    setNeedsPassword(false);
+    setPassword("");
+    setStatus("idle");
+  }
+
   async function handleConfirm() {
     if (!selectedCardId) {
       setErrorMessage("Selecione o cartão desta fatura antes de confirmar.");
@@ -283,12 +303,20 @@ export default function ImportarFaturaPage() {
             ))}
           </div>
 
-          <button
-            onClick={handleConfirm}
-            className="w-full mt-4 flex items-center justify-center gap-2 rounded-lg bg-moss-500 text-white font-body font-semibold py-3"
-          >
-            <Check size={16} /> Confirmar e salvar {items.filter((i) => i.included).length} itens
-          </button>
+          <div className="flex gap-2 mt-4">
+            <button
+              onClick={handleCancel}
+              className="flex-1 rounded-lg border border-moss-200 text-ink-600 font-body font-semibold py-3"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleConfirm}
+              className="flex-[2] flex items-center justify-center gap-2 rounded-lg bg-moss-500 text-white font-body font-semibold py-3"
+            >
+              <Check size={16} /> Confirmar e salvar {items.filter((i) => i.included).length} itens
+            </button>
+          </div>
         </div>
       )}
 
