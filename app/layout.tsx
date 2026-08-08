@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import BottomNav from "@/components/BottomNav";
+import { ToastProvider } from "@/components/Toast";
 
 export const metadata: Metadata = {
   title: "Saindo do Sufoco",
@@ -30,8 +31,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="font-body bg-base-50 text-ink-900">
-        {children}
-        <BottomNav />
+        <ToastProvider>
+          {children}
+          <BottomNav />
+        </ToastProvider>
         <RegisterServiceWorker />
       </body>
     </html>

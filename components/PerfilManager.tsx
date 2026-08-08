@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogOut, Plus, Trash2, Wallet, Home, Landmark } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { useToast } from "@/components/Toast";
 
 // ---------------------------------------------------------------------------
 // Tipos — espelham public.fixed_expenses e public.external_debts
@@ -105,6 +106,7 @@ export default function PerfilManager({
 function RendaSection({ initialIncome }: { initialIncome: number }) {
   const router = useRouter();
   const supabase = createClient();
+  const showToast = useToast();
   const [income, setIncome] = useState(initialIncome ? String(initialIncome) : "");
   const [saving, setSaving] = useState(false);
 
@@ -115,10 +117,20 @@ function RendaSection({ initialIncome }: { initialIncome: number }) {
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (user) {
-      await supabase.from("profiles").upsert({ id: user.id, monthly_income: numericIncome });
+    if (!user) {
+      setSaving(false);
+      showToast("Sessão expirada — faça login novamente.", "error");
+      return;
     }
+    const { error } = await supabase
+      .from("profiles")
+      .upsert({ id: user.id, monthly_income: numericIncome });
     setSaving(false);
+    if (error) {
+      showToast("Erro ao salvar renda.", "error");
+      return;
+    }
+    showToast("Renda atualizada.");
     router.refresh();
   }
 
@@ -141,7 +153,7 @@ function RendaSection({ initialIncome }: { initialIncome: number }) {
           disabled={saving}
           className="rounded-lg bg-moss-500 disabled:bg-moss-200 text-white font-body font-semibold text-sm px-4"
         >
-          Salvar
+          {saving ? "Salvando…" : "Salvar"}
         </button>
       </form>
     </section>
@@ -154,24 +166,32 @@ function RendaSection({ initialIncome }: { initialIncome: number }) {
 function DespesasFixasSection({ expenses }: { expenses: FixedExpense[] }) {
   const router = useRouter();
   const supabase = createClient();
+  const showToast = useToast();
   const [formOpen, setFormOpen] = useState(false);
   const [name, setName] = useState("");
   const [category, setCategory] = useState("moradia");
   const [amount, setAmount] = useState("");
   const [dueDay, setDueDay] = useState("");
   const [isEssential, setIsEssential] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     const numericAmount = parseFloat(amount.replace(",", ".")) || 0;
     if (!name || numericAmount <= 0) return;
 
+    setSaving(true);
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) {
+      setSaving(false);
+      showToast("Sessão expirada — faça login novamente.", "error");
+      return;
+    }
 
-    await supabase.from("fixed_expenses").insert({
+    const { error } = await supabase.from("fixed_expenses").insert({
       user_id: user.id,
       name,
       category,
@@ -180,16 +200,31 @@ function DespesasFixasSection({ expenses }: { expenses: FixedExpense[] }) {
       is_essential: isEssential,
     });
 
+    setSaving(false);
+    if (error) {
+      showToast("Erro ao adicionar despesa.", "error");
+      return;
+    }
+
     setName("");
     setAmount("");
     setDueDay("");
     setIsEssential(true);
     setFormOpen(false);
+    showToast("Despesa adicionada.");
     router.refresh();
   }
 
-  async function handleRemove(id: string) {
-    await supabase.from("fixed_expenses").update({ active: false }).eq("id", id);
+  async function handleRemove(id: string, name: string) {
+    if (!window.confirm(`Remover "${name}" das despesas fixas?`)) return;
+    setRemovingId(id);
+    const { error } = await supabase.from("fixed_expenses").update({ active: false }).eq("id", id);
+    setRemovingId(null);
+    if (error) {
+      showToast("Erro ao remover despesa.", "error");
+      return;
+    }
+    showToast("Despesa removida.");
     router.refresh();
   }
 
@@ -217,7 +252,11 @@ function DespesasFixasSection({ expenses }: { expenses: FixedExpense[] }) {
             </span>
             <span className="flex items-center gap-2">
               {formatBRL(item.amount)}
-              <button onClick={() => handleRemove(item.id)} aria-label="Remover">
+              <button
+                onClick={() => handleRemove(item.id, item.name)}
+                disabled={removingId === item.id}
+                aria-label="Remover"
+              >
                 <Trash2 size={13} className="text-ink-400" />
               </button>
             </span>
@@ -279,9 +318,10 @@ function DespesasFixasSection({ expenses }: { expenses: FixedExpense[] }) {
           </div>
           <button
             type="submit"
-            className="w-full rounded-lg bg-moss-500 text-white font-body font-semibold text-sm py-2"
+            disabled={saving}
+            className="w-full rounded-lg bg-moss-500 disabled:bg-moss-200 text-white font-body font-semibold text-sm py-2"
           >
-            Salvar despesa
+            {saving ? "Salvando…" : "Salvar despesa"}
           </button>
         </form>
       )}
@@ -295,6 +335,7 @@ function DespesasFixasSection({ expenses }: { expenses: FixedExpense[] }) {
 function DividasExternasSection({ debts }: { debts: ExternalDebt[] }) {
   const router = useRouter();
   const supabase = createClient();
+  const showToast = useToast();
   const [formOpen, setFormOpen] = useState(false);
   const [creditorName, setCreditorName] = useState("");
   const [debtType, setDebtType] = useState("emprestimo_pessoal");
@@ -304,18 +345,25 @@ function DividasExternasSection({ debts }: { debts: ExternalDebt[] }) {
   const [installmentAmount, setInstallmentAmount] = useState("");
   const [installmentsTotal, setInstallmentsTotal] = useState("");
   const [dueDay, setDueDay] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     const numericBalance = parseFloat(currentBalance.replace(",", ".")) || 0;
     if (!creditorName || numericBalance <= 0) return;
 
+    setSaving(true);
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) {
+      setSaving(false);
+      showToast("Sessão expirada — faça login novamente.", "error");
+      return;
+    }
 
-    await supabase.from("external_debts").insert({
+    const { error } = await supabase.from("external_debts").insert({
       user_id: user.id,
       creditor_name: creditorName,
       debt_type: debtType,
@@ -327,6 +375,12 @@ function DividasExternasSection({ debts }: { debts: ExternalDebt[] }) {
       due_day: dueDay ? Number(dueDay) : null,
     });
 
+    setSaving(false);
+    if (error) {
+      showToast("Erro ao adicionar dívida.", "error");
+      return;
+    }
+
     setCreditorName("");
     setOriginalPrincipal("");
     setCurrentBalance("");
@@ -335,16 +389,32 @@ function DividasExternasSection({ debts }: { debts: ExternalDebt[] }) {
     setInstallmentsTotal("");
     setDueDay("");
     setFormOpen(false);
+    showToast("Dívida adicionada.");
     router.refresh();
   }
 
   async function handleStatusChange(id: string, status: string) {
-    await supabase.from("external_debts").update({ status }).eq("id", id);
+    setBusyId(id);
+    const { error } = await supabase.from("external_debts").update({ status }).eq("id", id);
+    setBusyId(null);
+    if (error) {
+      showToast("Erro ao atualizar status.", "error");
+      return;
+    }
+    showToast("Status atualizado.");
     router.refresh();
   }
 
-  async function handleDelete(id: string) {
-    await supabase.from("external_debts").delete().eq("id", id);
+  async function handleDelete(id: string, creditorName: string) {
+    if (!window.confirm(`Remover a dívida com "${creditorName}"?`)) return;
+    setBusyId(id);
+    const { error } = await supabase.from("external_debts").delete().eq("id", id);
+    setBusyId(null);
+    if (error) {
+      showToast("Erro ao remover dívida.", "error");
+      return;
+    }
+    showToast("Dívida removida.");
     router.refresh();
   }
 
@@ -373,13 +443,18 @@ function DividasExternasSection({ debts }: { debts: ExternalDebt[] }) {
                   {formatBRL(debt.current_balance)} · {(debt.interest_rate_monthly * 100).toFixed(1)}% a.m.
                 </p>
               </div>
-              <button onClick={() => handleDelete(debt.id)} aria-label="Remover">
+              <button
+                onClick={() => handleDelete(debt.id, debt.creditor_name)}
+                disabled={busyId === debt.id}
+                aria-label="Remover"
+              >
                 <Trash2 size={14} className="text-ink-400" />
               </button>
             </div>
             <select
               value={debt.status}
               onChange={(e) => handleStatusChange(debt.id, e.target.value)}
+              disabled={busyId === debt.id}
               className="mt-2 rounded-lg border border-moss-200 px-2 py-1 font-body text-xs"
             >
               {DEBT_STATUS.map((s) => (
@@ -469,9 +544,10 @@ function DividasExternasSection({ debts }: { debts: ExternalDebt[] }) {
           </div>
           <button
             type="submit"
-            className="w-full rounded-lg bg-moss-500 text-white font-body font-semibold text-sm py-2"
+            disabled={saving}
+            className="w-full rounded-lg bg-moss-500 disabled:bg-moss-200 text-white font-body font-semibold text-sm py-2"
           >
-            Salvar dívida
+            {saving ? "Salvando…" : "Salvar dívida"}
           </button>
         </form>
       )}

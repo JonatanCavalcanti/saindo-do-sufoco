@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { CreditCard, Plus, X, AlertOctagon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { CARD_MINIMUM_PAYMENT_RATE } from "@/lib/rescue-plan";
+import { useToast } from "@/components/Toast";
 
 // ---------------------------------------------------------------------------
 // Tipos — espelham public.cards e o resultado de public.get_card_available_limit
@@ -225,14 +226,22 @@ function NovaCompraForm({
 // ---------------------------------------------------------------------------
 // Formulário de novo cartão
 // ---------------------------------------------------------------------------
-function NovoCartaoForm({ onClose, onSubmit }: { onClose: () => void; onSubmit: (data: {
-  nickname: string;
-  brand: string;
-  creditLimit: number;
-  closingDay: number;
-  dueDay: number;
-  revolvingInterestRate: number;
-}) => void }) {
+function NovoCartaoForm({
+  onClose,
+  onSubmit,
+  submitting,
+}: {
+  onClose: () => void;
+  onSubmit: (data: {
+    nickname: string;
+    brand: string;
+    creditLimit: number;
+    closingDay: number;
+    dueDay: number;
+    revolvingInterestRate: number;
+  }) => void;
+  submitting?: boolean;
+}) {
   const [nickname, setNickname] = useState("");
   const [brand, setBrand] = useState("");
   const [creditLimit, setCreditLimit] = useState("");
@@ -344,10 +353,10 @@ function NovoCartaoForm({ onClose, onSubmit }: { onClose: () => void; onSubmit: 
 
         <button
           type="submit"
-          disabled={!isValid}
+          disabled={!isValid || submitting}
           className="w-full rounded-lg bg-moss-500 disabled:bg-moss-200 text-white font-body font-semibold py-3"
         >
-          Salvar cartão
+          {submitting ? "Salvando…" : "Salvar cartão"}
         </button>
       </form>
     </div>
@@ -359,12 +368,14 @@ function NovoCartaoForm({ onClose, onSubmit }: { onClose: () => void; onSubmit: 
 // ---------------------------------------------------------------------------
 export default function CreditCardManager({ initialCards }: { initialCards: Card[] }) {
   const router = useRouter();
+  const showToast = useToast();
   const [cards] = useState<Card[]>(initialCards);
   const [formOpenFor, setFormOpenFor] = useState<Card | null>(null);
   const [newCardFormOpen, setNewCardFormOpen] = useState(false);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const [submittingPurchase, setSubmittingPurchase] = useState(false);
+  const [submittingCard, setSubmittingCard] = useState(false);
 
   const availableLimits = useMemo(() => {
     const map: Record<string, number> = {};
@@ -390,7 +401,10 @@ export default function CreditCardManager({ initialCards }: { initialCards: Card
         return;
       }
       setFormOpenFor(null);
+      showToast("Compra lançada com sucesso.");
       router.refresh();
+    } catch {
+      setPurchaseError("Erro de conexão ao lançar a compra.");
     } finally {
       setSubmittingPurchase(false);
     }
@@ -404,13 +418,18 @@ export default function CreditCardManager({ initialCards }: { initialCards: Card
     dueDay: number;
     revolvingInterestRate: number;
   }) {
+    setSubmittingCard(true);
     const supabase = createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) {
+      setSubmittingCard(false);
+      showToast("Sessão expirada — faça login novamente.", "error");
+      return;
+    }
 
-    await supabase.from("cards").insert({
+    const { error } = await supabase.from("cards").insert({
       user_id: user.id,
       nickname: data.nickname,
       brand: data.brand || null,
@@ -420,7 +439,14 @@ export default function CreditCardManager({ initialCards }: { initialCards: Card
       revolving_interest_rate: data.revolvingInterestRate,
     });
 
+    setSubmittingCard(false);
+    if (error) {
+      showToast("Erro ao adicionar cartão.", "error");
+      return;
+    }
+
     setNewCardFormOpen(false);
+    showToast("Cartão adicionado.");
     router.refresh();
   }
 
@@ -507,7 +533,11 @@ export default function CreditCardManager({ initialCards }: { initialCards: Card
       )}
 
       {newCardFormOpen && (
-        <NovoCartaoForm onClose={() => setNewCardFormOpen(false)} onSubmit={handleNewCard} />
+        <NovoCartaoForm
+          onClose={() => setNewCardFormOpen(false)}
+          onSubmit={handleNewCard}
+          submitting={submittingCard}
+        />
       )}
     </main>
   );
