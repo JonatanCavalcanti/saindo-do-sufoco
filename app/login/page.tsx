@@ -1,12 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Leaf, Mail, Lock } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [mode, setMode] = useState<"entrar" | "criar">("entrar");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -31,8 +29,10 @@ export default function LoginPage() {
       return;
     }
 
-    router.refresh();
-    router.push("/dashboard");
+    // Navegação "dura" (não router.push): garante que o cookie de sessão
+    // recém-gravado já esteja presente na primeira request ao middleware,
+    // evitando o redirect de volta pro /login logo após autenticar.
+    window.location.href = "/dashboard";
   }
 
   return (
