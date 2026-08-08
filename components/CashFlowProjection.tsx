@@ -1,29 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-
-// ---------------------------------------------------------------------------
-// Em produção: agrupar `transactions` (não pagas) por `invoices.reference_month`
-// + parcelas futuras de `external_debts` + `fixed_expenses` recorrentes.
-// Aqui: gera 6 meses de exemplo com parcelas decrescendo (comportamento típico
-// de quem já não está fazendo novas compras parceladas).
-// ---------------------------------------------------------------------------
-type MonthProjection = {
-  month: string;
-  income: number;
-  committed: number; // soma de parcelas de cartão + empréstimos + fixas essenciais
-};
-
-function buildMockProjection(): MonthProjection[] {
-  const monthNames = ["Ago", "Set", "Out", "Nov", "Dez", "Jan"];
-  const baseCommitted = [4890, 4610, 4200, 3800, 3800, 3210];
-  return monthNames.map((month, i) => ({
-    month,
-    income: 6200,
-    committed: baseCommitted[i],
-  }));
-}
+import type { MonthProjection } from "@/lib/cash-flow";
 
 function formatBRL(value: number) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -33,7 +11,7 @@ function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   const committed = payload.find((p: any) => p.dataKey === "committed")?.value ?? 0;
   const income = payload.find((p: any) => p.dataKey === "income")?.value ?? 0;
-  const pct = ((committed / income) * 100).toFixed(0);
+  const pct = income > 0 ? ((committed / income) * 100).toFixed(0) : "0";
   return (
     <div className="bg-white border border-moss-200 rounded-lg px-3 py-2 shadow-sm">
       <p className="font-body text-xs font-semibold text-ink-900">{label}</p>
@@ -43,9 +21,7 @@ function CustomTooltip({ active, payload, label }: any) {
   );
 }
 
-export default function CashFlowProjection() {
-  const data = useMemo(() => buildMockProjection(), []);
-
+export default function CashFlowProjection({ data }: { data: MonthProjection[] }) {
   return (
     <div className="rounded-card bg-white border border-moss-200 p-4">
       <h3 className="font-body font-semibold text-sm text-ink-900 mb-1">

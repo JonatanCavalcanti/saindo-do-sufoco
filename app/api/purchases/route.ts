@@ -30,12 +30,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
   }
 
-  const { cardId, description, category, totalAmount, installments, purchaseDate } =
+  const { cardId, description, category, totalAmount, installments, purchaseDate, startingInstallment } =
     await req.json();
 
   if (!cardId || !description || !totalAmount || !installments || !purchaseDate) {
     return NextResponse.json({ error: "Campos obrigatórios ausentes." }, { status: 400 });
   }
+
+  // Para itens importados de PDF que já estão no meio de um parcelamento
+  // (ex: fatura mostra "3/10"), `purchaseDate` é a data DESTA ocorrência, e
+  // `startingInstallment` (>1) evita recriar as parcelas 1 e 2, já cobradas
+  // em faturas anteriores não importadas.
+  const startIndex = Math.max((startingInstallment ?? 1) - 1, 0);
 
   // 1. Confere limite disponível no servidor (nunca confiar só na validação do client)
   const { data: card, error: cardError } = await supabase
@@ -84,9 +90,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Erro ao criar a compra." }, { status: 500 });
   }
 
-  // 4. Para cada parcela, garante a invoice do mês e cria a transaction
-  for (let i = 0; i < installments; i++) {
-    const invoiceMonthDate = addMonths(firstInvoiceMonth, i);
+  // 4. Para cada parcela (a partir de startIndex), garante a invoice do mês e cria a transaction
+  for (let i = startIndex; i < installments; i++) {
+    const invoiceMonthDate = addMonths(firstInvoiceMonth, i - startIndex);
     const referenceMonth = firstDayOfMonth(invoiceMonthDate);
 
     // upsert manual: tenta achar a invoice do mês; cria se não existir
@@ -125,7 +131,7 @@ export async function POST(req: NextRequest) {
       invoiceId = createdInvoice.id;
     }
 
-    if (i === 0) {
+    if (i === startIndex) {
       await supabase.from("purchases").update({ first_invoice_id: invoiceId }).eq("id", newPurchase.id);
     }
 

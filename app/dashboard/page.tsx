@@ -1,234 +1,100 @@
-"use client";
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import DashboardClient from "@/components/DashboardClient";
+import { buildCashFlowProjection } from "@/lib/cash-flow";
 
-import { useMemo, useState } from "react";
-import { Eye, EyeOff, Home, Repeat, Landmark, AlertTriangle, Info } from "lucide-react";
-import CashFlowProjection from "@/components/CashFlowProjection";
-
-// ---------------------------------------------------------------------------
-// Tipos — espelham as tabelas do Supabase (profiles, fixed_expenses,
-// external_debts, invoices). Em produção isso vem de hooks (ex: useDashboardData)
-// que consultam o Supabase client; aqui usamos dados de exemplo para o protótipo.
-// ---------------------------------------------------------------------------
-type FixedExpense = { id: string; name: string; category: string; amount: number };
-type RecurringDebt = { id: string; name: string; amount: number; type: "cartao" | "emprestimo" };
-
-const MOCK = {
-  income: 6200,
-  fixedExpenses: [
-    { id: "1", name: "Aluguel", category: "moradia", amount: 1800 },
-    { id: "2", name: "Água + Luz + Internet", category: "contas_basicas", amount: 420 },
-  ] as FixedExpense[],
-  subscriptions: [
-    { id: "3", name: "Streaming (3 assinaturas)", category: "assinatura", amount: 89 },
-  ] as FixedExpense[],
-  recurringDebts: [
-    { id: "4", name: "Fatura Nubank (rotativo)", amount: 980, type: "cartao" },
-    { id: "5", name: "Empréstimo pessoal Caixa", amount: 540, type: "emprestimo" },
-  ] as RecurringDebt[],
-};
-
-function formatBRL(value: number) {
-  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+function firstDayOfMonth(date: Date): string {
+  return new Date(date.getFullYear(), date.getMonth(), 1).toISOString().slice(0, 10);
 }
 
-// ---------------------------------------------------------------------------
-// Elemento-assinatura do dashboard: "Anel do Alívio"
-// Mostra visualmente o % da renda já comprometido — a métrica mais importante
-// para quem está em sufoco financeiro. A cor e a respiração (animação sutil)
-// comunicam o nível de aperto sem usar linguagem alarmista.
-// ---------------------------------------------------------------------------
-function AnelDoAlivio({ committedPct }: { committedPct: number }) {
-  const clamped = Math.min(committedPct, 100);
-  const circumference = 2 * Math.PI * 70;
-  const offset = circumference - (clamped / 100) * circumference;
-
-  const tone =
-    clamped < 50 ? "text-alert-sage" : clamped < 80 ? "text-alert-amber" : "text-alert-brick";
-  const label = clamped < 50 ? "Respirando bem" : clamped < 80 ? "Atenção ao ritmo" : "Sufoco alto";
-
-  return (
-    <div className="relative flex flex-col items-center justify-center animate-breathe">
-      <svg width="180" height="180" viewBox="0 0 180 180" className="-rotate-90">
-        <circle cx="90" cy="90" r="70" stroke="#DCE4D8" strokeWidth="14" fill="none" />
-        <circle
-          cx="90"
-          cy="90"
-          r="70"
-          strokeWidth="14"
-          fill="none"
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          className={tone}
-          stroke="currentColor"
-          style={{ transition: "stroke-dashoffset 700ms ease" }}
-        />
-      </svg>
-      <div className="absolute flex flex-col items-center">
-        <span className="font-display text-4xl text-ink-900">{clamped.toFixed(0)}%</span>
-        <span className={`font-body text-xs font-semibold ${tone}`}>{label}</span>
-      </div>
-    </div>
-  );
+function addMonthsISO(referenceMonth: string, months: number): string {
+  const d = new Date(referenceMonth);
+  d.setMonth(d.getMonth() + months);
+  return firstDayOfMonth(d);
 }
 
-function RecurringBlock({
-  icon,
-  title,
-  items,
-  total,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  items: { id: string; name: string; amount: number }[];
-  total: number;
-}) {
+export default async function DashboardPage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) redirect("/login");
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("monthly_income")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const income = profile?.monthly_income ?? 0;
+
+  const { data: fixedRows } = await supabase
+    .from("fixed_expenses")
+    .select("id,name,category,amount")
+    .eq("user_id", user.id)
+    .eq("active", true);
+
+  const fixedExpenses = (fixedRows ?? []).filter((r) => r.category !== "assinatura");
+  const subscriptions = (fixedRows ?? []).filter((r) => r.category === "assinatura");
+
+  const currentMonth = firstDayOfMonth(new Date());
+
+  const { data: openInvoices } = await supabase
+    .from("invoices")
+    .select("id,total_amount,status,cards(nickname)")
+    .eq("user_id", user.id)
+    .eq("reference_month", currentMonth)
+    .neq("status", "paga");
+
+  const { data: externalDebts } = await supabase
+    .from("external_debts")
+    .select("id,creditor_name,installment_amount")
+    .eq("user_id", user.id)
+    .eq("status", "ativa");
+
+  const recurringDebts = [
+    ...(openInvoices ?? []).map((inv: any) => ({
+      id: inv.id,
+      name: `Fatura ${inv.cards?.nickname ?? "cartão"}`,
+      amount: inv.total_amount,
+      type: "cartao" as const,
+    })),
+    ...(externalDebts ?? []).map((d) => ({
+      id: d.id,
+      name: d.creditor_name,
+      amount: d.installment_amount ?? 0,
+      type: "emprestimo" as const,
+    })),
+  ];
+
+  // Projeção de fluxo de caixa: próximos 6 meses
+  const sixMonthsOut = addMonthsISO(currentMonth, 6);
+  const { data: futureInvoices } = await supabase
+    .from("invoices")
+    .select("reference_month,total_amount,status")
+    .eq("user_id", user.id)
+    .gte("reference_month", currentMonth)
+    .lt("reference_month", sixMonthsOut);
+
+  const recurringMonthly =
+    (fixedRows ?? []).reduce((sum, r) => sum + r.amount, 0) +
+    (externalDebts ?? []).reduce((sum, d) => sum + (d.installment_amount ?? 0), 0);
+
+  const projection = buildCashFlowProjection({
+    income,
+    invoicesByMonth: (futureInvoices ?? []).map((inv) => ({
+      referenceMonth: inv.reference_month,
+      totalAmount: inv.total_amount,
+      status: inv.status,
+    })),
+    recurringMonthly,
+  });
+
   return (
-    <div className="rounded-card bg-white/70 border border-moss-200 p-4">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2 text-ink-900">
-          {icon}
-          <h3 className="font-body font-semibold text-sm">{title}</h3>
-        </div>
-        <span className="font-body text-sm font-semibold text-moss-700">{formatBRL(total)}</span>
-      </div>
-      <ul className="space-y-1.5">
-        {items.map((item) => (
-          <li key={item.id} className="flex justify-between text-sm text-ink-600 font-body">
-            <span>{item.name}</span>
-            <span>{formatBRL(item.amount)}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-export default function DashboardPage() {
-  const [privacyMode, setPrivacyMode] = useState(false);
-
-  const totalFixed = useMemo(
-    () => MOCK.fixedExpenses.reduce((s, e) => s + e.amount, 0),
-    []
-  );
-  const totalSubs = useMemo(() => MOCK.subscriptions.reduce((s, e) => s + e.amount, 0), []);
-  const totalDebts = useMemo(
-    () => MOCK.recurringDebts.reduce((s, d) => s + d.amount, 0),
-    []
-  );
-  const totalExpenses = totalFixed + totalSubs + totalDebts;
-  const netBalance = MOCK.income - totalExpenses;
-  const committedPct = (totalExpenses / MOCK.income) * 100;
-
-  // Alerta inteligente: dispara quando o comprometimento passa de 70%
-  // (referência comum em recuperação de crédito para sinal de alerta)
-  const showCommitmentAlert = committedPct >= 70;
-
-  const mask = (formatted: string) => (privacyMode ? "R$ ••••" : formatted);
-
-  return (
-    <main className="min-h-screen bg-base-50 pb-24">
-      {/* Cabeçalho */}
-      <header className="px-5 pt-8 pb-4 flex items-center justify-between">
-        <div>
-          <p className="font-body text-sm text-ink-400">Boa tarde,</p>
-          <h1 className="font-display text-2xl text-ink-900">Como está sua respiração financeira?</h1>
-        </div>
-        <button
-          onClick={() => setPrivacyMode((v) => !v)}
-          aria-label={privacyMode ? "Mostrar valores" : "Ocultar valores"}
-          className="p-2 rounded-full bg-white border border-moss-200 text-ink-600"
-        >
-          {privacyMode ? <EyeOff size={18} /> : <Eye size={18} />}
-        </button>
-      </header>
-
-      {/* Resumo mensal + Anel do Alívio */}
-      <section className="px-5">
-        <div className="rounded-card bg-white p-6 border border-moss-200 flex flex-col items-center">
-          <AnelDoAlivio committedPct={committedPct} />
-          <p className="font-body text-xs text-ink-400 mt-2 text-center">
-            % da sua renda já comprometido com despesas e dívidas
-          </p>
-
-          <div className="grid grid-cols-2 gap-4 w-full mt-6">
-            <div className="text-center">
-              <p className="font-body text-xs text-ink-400">Receita total</p>
-              <p className="font-display text-lg text-moss-700">{mask(formatBRL(MOCK.income))}</p>
-            </div>
-            <div className="text-center">
-              <p className="font-body text-xs text-ink-400">Despesas totais</p>
-              <p className="font-display text-lg text-alert-brick">{mask(formatBRL(totalExpenses))}</p>
-            </div>
-          </div>
-
-          <div className="w-full mt-4 pt-4 border-t border-moss-200 text-center">
-            <p className="font-body text-xs text-ink-400">Saldo líquido do mês</p>
-            <p
-              className={`font-display text-2xl ${
-                netBalance >= 0 ? "text-moss-700" : "text-alert-brick"
-              }`}
-            >
-              {mask(formatBRL(netBalance))}
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* Alerta inteligente */}
-      {showCommitmentAlert && (
-        <section className="px-5 mt-4">
-          <div className="rounded-card bg-alert-amber/10 border border-alert-amber/40 p-4 flex gap-3">
-            <AlertTriangle className="text-alert-amber shrink-0 mt-0.5" size={20} />
-            <p className="font-body text-sm text-ink-900">
-              <strong>{committedPct.toFixed(0)}% da sua renda</strong> já está comprometida este mês.
-              Acima de 70% é sinal de alerta — vale abrir o{" "}
-              <span className="underline underline-offset-2">Plano de Resgate</span> para reorganizar
-              as prioridades antes de assumir novos compromissos.
-            </p>
-          </div>
-        </section>
-      )}
-
-      {/* Custos recorrentes */}
-      <section className="px-5 mt-6 space-y-3">
-        <h2 className="font-display text-lg text-ink-900 px-1">Seus compromissos recorrentes</h2>
-        <RecurringBlock
-          icon={<Home size={16} />}
-          title="Despesas fixas"
-          items={MOCK.fixedExpenses}
-          total={totalFixed}
-        />
-        <RecurringBlock
-          icon={<Repeat size={16} />}
-          title="Assinaturas e serviços"
-          items={MOCK.subscriptions}
-          total={totalSubs}
-        />
-        <RecurringBlock
-          icon={<Landmark size={16} />}
-          title="Dívidas e empréstimos"
-          items={MOCK.recurringDebts}
-          total={totalDebts}
-        />
-      </section>
-
-      {/* Projeção de fluxo de caixa */}
-      <section className="px-5 mt-6">
-        <CashFlowProjection />
-      </section>
-
-      {/* Dica didática do assistente */}
-      <section className="px-5 mt-4">
-        <div className="rounded-card bg-moss-50 border border-moss-200 p-4 flex gap-3">
-          <Info className="text-moss-700 shrink-0 mt-0.5" size={18} />
-          <p className="font-body text-sm text-ink-600">
-            Pagar apenas o mínimo da fatura parece aliviar agora, mas os juros rotativos do cartão
-            costumam superar 400% ao ano. Toque em um cartão para ver o simulador de perigo antes de
-            decidir.
-          </p>
-        </div>
-      </section>
-    </main>
+    <DashboardClient
+      data={{ income, fixedExpenses, subscriptions, recurringDebts }}
+      projection={projection}
+    />
   );
 }

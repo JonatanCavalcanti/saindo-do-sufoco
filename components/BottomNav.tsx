@@ -2,17 +2,20 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, CreditCard, Shield, FileUp } from "lucide-react";
+import { Home, CreditCard, Shield, FileUp, User } from "lucide-react";
 
 const ITEMS = [
   { href: "/dashboard", label: "Início", icon: Home },
   { href: "/cartoes", label: "Cartões", icon: CreditCard },
   { href: "/plano-de-resgate", label: "Resgate", icon: Shield },
   { href: "/faturas/importar", label: "Importar", icon: FileUp },
+  { href: "/perfil", label: "Perfil", icon: User },
 ];
 
 export default function BottomNav() {
   const pathname = usePathname();
+
+  if (pathname === "/login") return null;
 
   return (
     <nav

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { UploadCloud, FileText, Check, AlertTriangle, Trash2, Lock } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { ParsedItem } from "@/lib/pdf-parsers";
@@ -8,6 +8,8 @@ import { ParsedItem } from "@/lib/pdf-parsers";
 type ImportStatus = "idle" | "enviando" | "processando" | "validando" | "salvando" | "concluido" | "erro";
 
 type DraftItem = ParsedItem & { included: boolean };
+
+type CardOption = { id: string; nickname: string };
 
 export default function ImportarFaturaPage() {
   const [files, setFiles] = useState<File[]>([]);
@@ -17,8 +19,24 @@ export default function ImportarFaturaPage() {
   const [items, setItems] = useState<DraftItem[]>([]);
   const [pdfImportId, setPdfImportId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [cardOptions, setCardOptions] = useState<CardOption[]>([]);
+  const [selectedCardId, setSelectedCardId] = useState("");
 
   const supabase = createClient();
+
+  useEffect(() => {
+    supabase
+      .from("cards")
+      .select("id,nickname")
+      .eq("active", true)
+      .then(({ data }) => {
+        if (data) {
+          setCardOptions(data);
+          if (data.length > 0) setSelectedCardId(data[0].id);
+        }
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     if (e.target.files) setFiles(Array.from(e.target.files));
@@ -44,7 +62,12 @@ export default function ImportarFaturaPage() {
 
       const { data: importRow, error: insertError } = await supabase
         .from("pdf_imports")
-        .insert({ user_id: user.id, file_name: file.name, storage_path: storagePath })
+        .insert({
+          user_id: user.id,
+          card_id: selectedCardId || null,
+          file_name: file.name,
+          storage_path: storagePath,
+        })
         .select()
         .single();
       if (insertError || !importRow) throw insertError ?? new Error("Falha ao registrar import.");
@@ -83,14 +106,44 @@ export default function ImportarFaturaPage() {
   }
 
   async function handleConfirm() {
+    if (!selectedCardId) {
+      setErrorMessage("Selecione o cartão desta fatura antes de confirmar.");
+      setStatus("erro");
+      return;
+    }
     setStatus("salvando");
     try {
       const toSave = items.filter((i) => i.included);
-      // Em produção: POST /api/purchases (ou endpoint dedicado de import em lote)
-      // para cada item confirmado, criando purchase + transactions.
-      console.log("Gravando itens confirmados", toSave);
+
+      // Loop sequencial (não Promise.all): evita duas requisições concorrentes
+      // disputarem a lógica de "achar/criar invoice do mês" na mesma rota.
+      for (const item of toSave) {
+        const installmentsTotal = item.installmentTotal ?? 1;
+        const res = await fetch("/api/purchases", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cardId: selectedCardId,
+            description: item.description,
+            totalAmount: item.amount * installmentsTotal,
+            installments: installmentsTotal,
+            purchaseDate: item.date ?? new Date().toISOString().slice(0, 10),
+            startingInstallment: item.installmentCurrent ?? 1,
+          }),
+        });
+        if (!res.ok) {
+          const body = await res.json();
+          throw new Error(body.error ?? "Erro ao salvar um dos itens.");
+        }
+      }
+
+      if (pdfImportId) {
+        await supabase.from("pdf_imports").update({ status: "importado" }).eq("id", pdfImportId);
+      }
+
       setStatus("concluido");
-    } catch {
+    } catch (err: any) {
+      setErrorMessage(err.message ?? "Erro ao salvar os itens confirmados.");
       setStatus("erro");
     }
   }
@@ -104,6 +157,27 @@ export default function ImportarFaturaPage() {
 
       {status === "idle" && (
         <div className="space-y-4">
+          <div>
+            <label className="font-body text-xs text-ink-600">Cartão desta fatura</label>
+            {cardOptions.length === 0 ? (
+              <p className="font-body text-xs text-ink-400 mt-1">
+                Nenhum cartão cadastrado ainda — cadastre um em "Cartões" antes de importar.
+              </p>
+            ) : (
+              <select
+                value={selectedCardId}
+                onChange={(e) => setSelectedCardId(e.target.value)}
+                className="w-full mt-1 rounded-lg border border-moss-200 px-3 py-2 font-body text-sm bg-white"
+              >
+                {cardOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nickname}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
           <label className="flex flex-col items-center justify-center rounded-card border-2 border-dashed border-moss-200 bg-white p-8 cursor-pointer">
             <UploadCloud className="text-moss-500 mb-2" size={28} />
             <span className="font-body text-sm text-ink-600 text-center">
@@ -137,7 +211,7 @@ export default function ImportarFaturaPage() {
 
           <button
             onClick={handleUploadAndParse}
-            disabled={files.length === 0}
+            disabled={files.length === 0 || !selectedCardId}
             className="w-full rounded-lg bg-moss-500 disabled:bg-moss-200 text-white font-body font-semibold py-3"
           >
             Enviar e extrair itens

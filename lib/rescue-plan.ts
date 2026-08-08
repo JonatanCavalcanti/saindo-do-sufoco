@@ -5,6 +5,11 @@
 // Por isso o cálculo sempre reserva o essencial primeiro, e só then distribui
 // o que sobrar entre as dívidas, ordenadas pelo método escolhido.
 
+// Heurística de pagamento mínimo de fatura de cartão (~15% do valor), usada
+// tanto no simulador de perigo (CreditCardManager) quanto aqui ao montar o
+// UnifiedDebt de dívidas de cartão — mesmo número, um único lugar.
+export const CARD_MINIMUM_PAYMENT_RATE = 0.15;
+
 export type DebtSource = "cartao" | "emprestimo";
 
 export type UnifiedDebt = {

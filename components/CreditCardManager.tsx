@@ -1,7 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { CreditCard, Plus, X, AlertOctagon } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { CARD_MINIMUM_PAYMENT_RATE } from "@/lib/rescue-plan";
 
 // ---------------------------------------------------------------------------
 // Tipos — espelham public.cards e o resultado de public.get_card_available_limit
@@ -15,30 +18,8 @@ type Card = {
   closingDay: number;
   dueDay: number;
   revolvingInterestRate: number; // ex: 0.145 = 14,5% a.m.
+  currentInvoiceTotal: number; // total da fatura do mês corrente (vem de `invoices`)
 };
-
-const MOCK_CARDS: Card[] = [
-  {
-    id: "card-1",
-    nickname: "Nubank Roxinho",
-    brand: "Mastercard",
-    creditLimit: 3500,
-    usedLimit: 2180,
-    closingDay: 12,
-    dueDay: 19,
-    revolvingInterestRate: 0.145,
-  },
-  {
-    id: "card-2",
-    nickname: "Inter Black",
-    brand: "Visa",
-    creditLimit: 6000,
-    usedLimit: 4950,
-    closingDay: 5,
-    dueDay: 12,
-    revolvingInterestRate: 0.132,
-  },
-];
 
 function formatBRL(value: number) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -67,7 +48,7 @@ function LimiteBar({ used, total }: { used: number; total: number }) {
 // saldo_devedor_mes2 = (fatura - pagamento_minimo) * (1 + taxa_rotativo)
 // ---------------------------------------------------------------------------
 function SimuladorPerigo({ card, invoiceTotal }: { card: Card; invoiceTotal: number }) {
-  const minimumPayment = invoiceTotal * 0.15; // heurística: mínimo ~15% (ajustável por cartão real)
+  const minimumPayment = invoiceTotal * CARD_MINIMUM_PAYMENT_RATE;
   const remainingAfterMinimum = invoiceTotal - minimumPayment;
   const interestCharged = remainingAfterMinimum * card.revolvingInterestRate;
   const nextMonthBalance = remainingAfterMinimum + interestCharged;
@@ -82,7 +63,7 @@ function SimuladorPerigo({ card, invoiceTotal }: { card: Card; invoiceTotal: num
       </div>
       <div className="space-y-1.5 font-body text-sm text-ink-600">
         <div className="flex justify-between">
-          <span>Pagamento mínimo (~15%)</span>
+          <span>Pagamento mínimo (~{(CARD_MINIMUM_PAYMENT_RATE * 100).toFixed(0)}%)</span>
           <span className="font-semibold text-ink-900">{formatBRL(minimumPayment)}</span>
         </div>
         <div className="flex justify-between">
@@ -117,11 +98,15 @@ function NovaCompraForm({
   availableLimit,
   onClose,
   onSubmit,
+  error,
+  submitting,
 }: {
   card: Card;
   availableLimit: number;
   onClose: () => void;
   onSubmit: (data: { description: string; totalAmount: number; installments: number; purchaseDate: string }) => void;
+  error?: string | null;
+  submitting?: boolean;
 }) {
   const [description, setDescription] = useState("");
   const [totalAmount, setTotalAmount] = useState("");
@@ -219,12 +204,150 @@ function NovaCompraForm({
           </p>
         )}
 
+        {error && (
+          <p className="font-body text-xs text-alert-brick flex items-center gap-1">
+            <AlertOctagon size={14} /> {error}
+          </p>
+        )}
+
         <button
           type="submit"
-          disabled={exceedsLimit || !description || numericTotal <= 0}
+          disabled={exceedsLimit || !description || numericTotal <= 0 || submitting}
           className="w-full rounded-lg bg-moss-500 disabled:bg-moss-200 text-white font-body font-semibold py-3"
         >
-          Confirmar compra
+          {submitting ? "Salvando…" : "Confirmar compra"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Formulário de novo cartão
+// ---------------------------------------------------------------------------
+function NovoCartaoForm({ onClose, onSubmit }: { onClose: () => void; onSubmit: (data: {
+  nickname: string;
+  brand: string;
+  creditLimit: number;
+  closingDay: number;
+  dueDay: number;
+  revolvingInterestRate: number;
+}) => void }) {
+  const [nickname, setNickname] = useState("");
+  const [brand, setBrand] = useState("");
+  const [creditLimit, setCreditLimit] = useState("");
+  const [closingDay, setClosingDay] = useState("");
+  const [dueDay, setDueDay] = useState("");
+  const [interestRate, setInterestRate] = useState("");
+
+  const numericLimit = parseFloat(creditLimit.replace(",", ".")) || 0;
+  const isValid =
+    nickname && numericLimit > 0 && Number(closingDay) >= 1 && Number(closingDay) <= 31 &&
+    Number(dueDay) >= 1 && Number(dueDay) <= 31;
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!isValid) return;
+    onSubmit({
+      nickname,
+      brand,
+      creditLimit: numericLimit,
+      closingDay: Number(closingDay),
+      dueDay: Number(dueDay),
+      revolvingInterestRate: (parseFloat(interestRate.replace(",", ".")) || 0) / 100,
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink-900/40">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-md bg-white rounded-t-card p-5 pb-8 space-y-4 animate-[slideUp_0.25s_ease]"
+      >
+        <div className="flex items-center justify-between">
+          <h3 className="font-display text-lg text-ink-900">Novo cartão</h3>
+          <button type="button" onClick={onClose} aria-label="Fechar" className="text-ink-400">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div>
+          <label className="font-body text-xs text-ink-600">Apelido</label>
+          <input
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
+            placeholder="Ex: Nubank Roxinho"
+            className="w-full mt-1 rounded-lg border border-moss-200 px-3 py-2 font-body text-sm"
+            required
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="font-body text-xs text-ink-600">Bandeira</label>
+            <input
+              value={brand}
+              onChange={(e) => setBrand(e.target.value)}
+              placeholder="Visa, Mastercard..."
+              className="w-full mt-1 rounded-lg border border-moss-200 px-3 py-2 font-body text-sm"
+            />
+          </div>
+          <div>
+            <label className="font-body text-xs text-ink-600">Limite total (R$)</label>
+            <input
+              value={creditLimit}
+              onChange={(e) => setCreditLimit(e.target.value)}
+              inputMode="decimal"
+              placeholder="3500,00"
+              className="w-full mt-1 rounded-lg border border-moss-200 px-3 py-2 font-body text-sm"
+              required
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="font-body text-xs text-ink-600">Fecha dia</label>
+            <input
+              value={closingDay}
+              onChange={(e) => setClosingDay(e.target.value)}
+              type="number"
+              min={1}
+              max={31}
+              className="w-full mt-1 rounded-lg border border-moss-200 px-3 py-2 font-body text-sm"
+              required
+            />
+          </div>
+          <div>
+            <label className="font-body text-xs text-ink-600">Vence dia</label>
+            <input
+              value={dueDay}
+              onChange={(e) => setDueDay(e.target.value)}
+              type="number"
+              min={1}
+              max={31}
+              className="w-full mt-1 rounded-lg border border-moss-200 px-3 py-2 font-body text-sm"
+              required
+            />
+          </div>
+          <div>
+            <label className="font-body text-xs text-ink-600">Juros rotativo %</label>
+            <input
+              value={interestRate}
+              onChange={(e) => setInterestRate(e.target.value)}
+              inputMode="decimal"
+              placeholder="14,5"
+              className="w-full mt-1 rounded-lg border border-moss-200 px-3 py-2 font-body text-sm"
+            />
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          disabled={!isValid}
+          className="w-full rounded-lg bg-moss-500 disabled:bg-moss-200 text-white font-body font-semibold py-3"
+        >
+          Salvar cartão
         </button>
       </form>
     </div>
@@ -234,10 +357,14 @@ function NovaCompraForm({
 // ---------------------------------------------------------------------------
 // Componente principal — lista de cartões
 // ---------------------------------------------------------------------------
-export default function CreditCardManager() {
-  const [cards] = useState<Card[]>(MOCK_CARDS);
+export default function CreditCardManager({ initialCards }: { initialCards: Card[] }) {
+  const router = useRouter();
+  const [cards] = useState<Card[]>(initialCards);
   const [formOpenFor, setFormOpenFor] = useState<Card | null>(null);
+  const [newCardFormOpen, setNewCardFormOpen] = useState(false);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
+  const [purchaseError, setPurchaseError] = useState<string | null>(null);
+  const [submittingPurchase, setSubmittingPurchase] = useState(false);
 
   const availableLimits = useMemo(() => {
     const map: Record<string, number> = {};
@@ -245,31 +372,81 @@ export default function CreditCardManager() {
     return map;
   }, [cards]);
 
-  // Em produção: POST /api/purchases → cria a linha em `purchases` e distribui
-  // as N linhas em `transactions`, uma por fatura futura (ver schema.sql).
-  function handleNewPurchase(
+  async function handleNewPurchase(
     card: Card,
     data: { description: string; totalAmount: number; installments: number; purchaseDate: string }
   ) {
-    console.log("Enviar para /api/purchases", { cardId: card.id, ...data });
-    setFormOpenFor(null);
+    setSubmittingPurchase(true);
+    setPurchaseError(null);
+    try {
+      const res = await fetch("/api/purchases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cardId: card.id, ...data }),
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        setPurchaseError(body.error ?? "Erro ao lançar a compra.");
+        return;
+      }
+      setFormOpenFor(null);
+      router.refresh();
+    } finally {
+      setSubmittingPurchase(false);
+    }
+  }
+
+  async function handleNewCard(data: {
+    nickname: string;
+    brand: string;
+    creditLimit: number;
+    closingDay: number;
+    dueDay: number;
+    revolvingInterestRate: number;
+  }) {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+
+    await supabase.from("cards").insert({
+      user_id: user.id,
+      nickname: data.nickname,
+      brand: data.brand || null,
+      credit_limit: data.creditLimit,
+      closing_day: data.closingDay,
+      due_day: data.dueDay,
+      revolving_interest_rate: data.revolvingInterestRate,
+    });
+
+    setNewCardFormOpen(false);
+    router.refresh();
   }
 
   return (
     <main className="min-h-screen bg-base-50 pb-24 px-5 pt-8">
       <div className="flex items-center justify-between mb-4">
         <h1 className="font-display text-2xl text-ink-900">Seus cartões</h1>
-        <button className="flex items-center gap-1 text-moss-700 font-body text-sm font-semibold">
+        <button
+          onClick={() => setNewCardFormOpen(true)}
+          className="flex items-center gap-1 text-moss-700 font-body text-sm font-semibold"
+        >
           <Plus size={16} /> Novo cartão
         </button>
       </div>
+
+      {cards.length === 0 && (
+        <p className="font-body text-sm text-ink-400 mb-4">
+          Nenhum cartão cadastrado ainda. Toque em "Novo cartão" para começar.
+        </p>
+      )}
 
       <div className="space-y-3">
         {cards.map((card) => {
           const available = availableLimits[card.id];
           const isExpanded = expandedCard === card.id;
-          // Fatura de exemplo do mês corrente — em produção vem de `invoices`
-          const currentInvoiceTotal = card.usedLimit * 0.4;
+          const currentInvoiceTotal = card.currentInvoiceTotal;
 
           return (
             <div key={card.id} className="rounded-card bg-white border border-moss-200 p-4">
@@ -319,9 +496,18 @@ export default function CreditCardManager() {
         <NovaCompraForm
           card={formOpenFor}
           availableLimit={availableLimits[formOpenFor.id]}
-          onClose={() => setFormOpenFor(null)}
+          onClose={() => {
+            setFormOpenFor(null);
+            setPurchaseError(null);
+          }}
           onSubmit={(data) => handleNewPurchase(formOpenFor, data)}
+          error={purchaseError}
+          submitting={submittingPurchase}
         />
+      )}
+
+      {newCardFormOpen && (
+        <NovoCartaoForm onClose={() => setNewCardFormOpen(false)} onSubmit={handleNewCard} />
       )}
     </main>
   );
