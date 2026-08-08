@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CreditCard, Plus, X, AlertOctagon } from "lucide-react";
+import { CreditCard, Plus, X, AlertOctagon, Calendar, Receipt } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { CARD_MINIMUM_PAYMENT_RATE } from "@/lib/rescue-plan";
 import { useToast } from "@/components/Toast";
@@ -10,6 +10,23 @@ import { useToast } from "@/components/Toast";
 // ---------------------------------------------------------------------------
 // Tipos — espelham public.cards e o resultado de public.get_card_available_limit
 // ---------------------------------------------------------------------------
+type InvoiceItem = {
+  id: string;
+  description: string;
+  amount: number;
+  installmentCurrent: number;
+  installmentTotal: number;
+};
+
+type InvoiceDetail = {
+  monthLabel: string;
+  closingDate: string;
+  dueDate: string;
+  status: string;
+  totalAmount: number;
+  items: InvoiceItem[];
+};
+
 type Card = {
   id: string;
   nickname: string;
@@ -20,7 +37,20 @@ type Card = {
   dueDay: number;
   revolvingInterestRate: number; // ex: 0.145 = 14,5% a.m.
   currentInvoiceTotal: number; // total da fatura do mês corrente (vem de `invoices`)
+  invoice: InvoiceDetail | null; // null = nenhuma fatura aberta ainda neste mês
 };
+
+const INVOICE_STATUS_LABELS: Record<string, string> = {
+  aberta: "Aberta",
+  fechada: "Fechada",
+  paga: "Paga",
+  atrasada: "Atrasada",
+};
+
+function formatDate(iso: string) {
+  const [year, month, day] = iso.split("-");
+  return `${day}/${month}/${year}`;
+}
 
 function formatBRL(value: number) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -39,6 +69,70 @@ function LimiteBar({ used, total }: { used: number; total: number }) {
         className={`h-full ${tone} transition-all duration-500`}
         style={{ width: `${pct}%` }}
       />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Resumo da fatura do mês — datas, status e cada item lançado
+// ---------------------------------------------------------------------------
+function FaturaDoMes({ invoice }: { invoice: InvoiceDetail | null }) {
+  if (!invoice) {
+    return (
+      <div className="rounded-card bg-base-100 p-4">
+        <div className="flex items-center gap-2 mb-1">
+          <Receipt size={16} className="text-ink-400" />
+          <h4 className="font-body font-semibold text-sm text-ink-900">Fatura do mês</h4>
+        </div>
+        <p className="font-body text-xs text-ink-400">Nenhuma fatura aberta neste mês ainda.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-card bg-base-100 p-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <Receipt size={16} className="text-moss-700" />
+          <h4 className="font-body font-semibold text-sm text-ink-900">
+            Fatura de {invoice.monthLabel}
+          </h4>
+        </div>
+        <span className="font-body text-xs font-semibold text-moss-700 bg-moss-50 rounded-full px-2 py-0.5">
+          {INVOICE_STATUS_LABELS[invoice.status] ?? invoice.status}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-1.5 font-body text-xs text-ink-400 mb-3">
+        <Calendar size={12} />
+        Fecha {formatDate(invoice.closingDate)} · Vence {formatDate(invoice.dueDate)}
+      </div>
+
+      {invoice.items.length === 0 ? (
+        <p className="font-body text-xs text-ink-400">Nenhum item lançado nesta fatura ainda.</p>
+      ) : (
+        <ul className="space-y-1.5 mb-2">
+          {invoice.items.map((item) => (
+            <li key={item.id} className="flex justify-between text-sm font-body text-ink-600">
+              <span className="truncate pr-2">
+                {item.description}
+                {item.installmentTotal > 1 && (
+                  <span className="text-ink-400 text-xs">
+                    {" "}
+                    ({item.installmentCurrent}/{item.installmentTotal})
+                  </span>
+                )}
+              </span>
+              <span className="shrink-0">{formatBRL(item.amount)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="flex justify-between pt-2 border-t border-moss-200 font-body text-sm font-semibold text-ink-900">
+        <span>Total da fatura</span>
+        <span>{formatBRL(invoice.totalAmount)}</span>
+      </div>
     </div>
   );
 }
@@ -510,6 +604,7 @@ export default function CreditCardManager({ initialCards }: { initialCards: Card
                   >
                     <Plus size={16} /> Lançar compra parcelada
                   </button>
+                  <FaturaDoMes invoice={card.invoice} />
                   <SimuladorPerigo card={card} invoiceTotal={currentInvoiceTotal} />
                 </div>
               )}

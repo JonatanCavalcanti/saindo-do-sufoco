@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Eye, EyeOff, Home, Repeat, Landmark, AlertTriangle, Info } from "lucide-react";
+import Link from "next/link";
+import { Eye, EyeOff, Home, Repeat, Landmark, AlertTriangle, Info, ChevronRight } from "lucide-react";
 import CashFlowProjection from "@/components/CashFlowProjection";
 import type { MonthProjection } from "@/lib/cash-flow";
 
@@ -68,7 +69,7 @@ function RecurringBlock({
 }: {
   icon: React.ReactNode;
   title: string;
-  items: { id: string; name: string; amount: number }[];
+  items: { id: string; name: string; amount: number; href?: string }[];
   total: number;
 }) {
   return (
@@ -81,12 +82,27 @@ function RecurringBlock({
         <span className="font-body text-sm font-semibold text-moss-700">{formatBRL(total)}</span>
       </div>
       <ul className="space-y-1.5">
-        {items.map((item) => (
-          <li key={item.id} className="flex justify-between text-sm text-ink-600 font-body">
-            <span>{item.name}</span>
-            <span>{formatBRL(item.amount)}</span>
-          </li>
-        ))}
+        {items.map((item) =>
+          item.href ? (
+            <li key={item.id}>
+              <Link
+                href={item.href}
+                className="flex justify-between items-center text-sm text-ink-600 font-body"
+              >
+                <span className="flex items-center gap-1">
+                  {item.name}
+                  <ChevronRight size={12} className="text-ink-400" />
+                </span>
+                <span>{formatBRL(item.amount)}</span>
+              </Link>
+            </li>
+          ) : (
+            <li key={item.id} className="flex justify-between text-sm text-ink-600 font-body">
+              <span>{item.name}</span>
+              <span>{formatBRL(item.amount)}</span>
+            </li>
+          )
+        )}
         {items.length === 0 && (
           <li className="text-sm text-ink-400 font-body">Nada cadastrado ainda.</li>
         )}
@@ -208,7 +224,10 @@ export default function DashboardClient({
         <RecurringBlock
           icon={<Landmark size={16} />}
           title="Dívidas e empréstimos"
-          items={data.recurringDebts}
+          items={data.recurringDebts.map((d) => ({
+            ...d,
+            href: d.type === "cartao" ? "/cartoes" : undefined,
+          }))}
           total={totalDebts}
         />
       </section>

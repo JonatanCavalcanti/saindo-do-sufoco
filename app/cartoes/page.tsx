@@ -7,6 +7,11 @@ function firstDayOfMonth(date: Date): string {
   return new Date(date.getFullYear(), date.getMonth(), 1).toISOString().slice(0, 10);
 }
 
+const MONTH_LABELS = [
+  "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+  "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+];
+
 export default async function CartoesPage() {
   const supabase = await createClient();
   const {
@@ -20,12 +25,36 @@ export default async function CartoesPage() {
 
   const initialCards = await Promise.all(
     cards.map(async (c) => {
-      const { data: invoice } = await supabase
+      const { data: invoiceRow } = await supabase
         .from("invoices")
-        .select("total_amount")
+        .select("id,reference_month,closing_date,due_date,status,total_amount")
         .eq("card_id", c.id)
         .eq("reference_month", currentMonth)
         .maybeSingle();
+
+      let invoice = null;
+      if (invoiceRow) {
+        const { data: transactions } = await supabase
+          .from("transactions")
+          .select("id,amount,installment_number,purchases(description,installments_total)")
+          .eq("invoice_id", invoiceRow.id)
+          .order("created_at");
+
+        invoice = {
+          monthLabel: MONTH_LABELS[new Date(invoiceRow.reference_month).getMonth()],
+          closingDate: invoiceRow.closing_date,
+          dueDate: invoiceRow.due_date,
+          status: invoiceRow.status,
+          totalAmount: invoiceRow.total_amount,
+          items: (transactions ?? []).map((t: any) => ({
+            id: t.id,
+            description: t.purchases?.description ?? "Compra",
+            amount: t.amount,
+            installmentCurrent: t.installment_number,
+            installmentTotal: t.purchases?.installments_total ?? 1,
+          })),
+        };
+      }
 
       return {
         id: c.id,
@@ -36,7 +65,8 @@ export default async function CartoesPage() {
         closingDay: c.closingDay,
         dueDay: c.dueDay,
         revolvingInterestRate: c.revolvingInterestRate,
-        currentInvoiceTotal: invoice?.total_amount ?? 0,
+        currentInvoiceTotal: invoice?.totalAmount ?? 0,
+        invoice,
       };
     })
   );
