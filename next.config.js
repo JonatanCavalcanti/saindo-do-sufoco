@@ -7,6 +7,13 @@ const nextConfig = {
   // pdfjs cai num polyfill manco que quebra em faturas com layout mais
   // complexo (boleto, imagens) mesmo extraindo só texto, não renderizando.
   serverExternalPackages: ["pdfjs-dist", "@napi-rs/canvas"],
+  // pdfjs-dist importa pdf.worker.mjs dinamicamente em runtime (mesmo em modo
+  // "fake worker" de Node) — o rastreador de arquivos da Vercel não detecta
+  // essa importação dinâmica e deixa o arquivo de fora do bundle da função
+  // serverless, quebrando com "Cannot find module .../pdf.worker.mjs".
+  outputFileTracingIncludes: {
+    "/api/parse-invoice/**": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
+  },
   experimental: {
     // Sem isso, o Router Cache do Next mantém o RSC de páginas dinâmicas
     // (dashboard, cartões, plano de resgate, perfil) por até 30s — depois de
