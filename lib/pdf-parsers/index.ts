@@ -41,7 +41,7 @@ const genericParser: BankParser = {
   parse(rawText: string) {
     const referenceYear = new Date().getFullYear();
     const lineRegex =
-      /(\d{2})\/(\d{2})\s+(.+?)\s+(?:(\d{1,2})\/(\d{1,2})\s+)?R?\$?\s?(\d{1,3}(?:\.\d{3})*,\d{2})/g;
+      /(\d{2})\/(\d{2})\s+(.+?)\s+(?:(\d{1,2})\/(\d{1,2})\s+)?R?\$?\s?(-?\d{1,3}(?:\.\d{3})*,\d{2})/g;
 
     const items: ParsedItem[] = [];
     let match: RegExpExecArray | null;
@@ -82,7 +82,7 @@ const itauParser: BankParser = {
   parse(rawText) {
     const referenceYear = new Date().getFullYear();
     const lineRegex =
-      /(\d{2})\/(\d{2})\s+(.+?)\s*(?:PARC\.?\s*(\d{1,2})\/(\d{1,2}))?\s+R?\$?\s?(\d{1,3}(?:\.\d{3})*,\d{2})/gi;
+      /(\d{2})\/(\d{2})\s+(.+?)\s*(?:PARC\.?\s*(\d{1,2})\/(\d{1,2}))?\s+R?\$?\s?(-?\d{1,3}(?:\.\d{3})*,\d{2})/gi;
     const items: ParsedItem[] = [];
     let match: RegExpExecArray | null;
     while ((match = lineRegex.exec(rawText)) !== null) {
