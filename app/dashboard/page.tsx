@@ -42,10 +42,19 @@ export default async function DashboardPage() {
 
   const { data: openInvoices } = await supabase
     .from("invoices")
-    .select("id,total_amount,status,cards(nickname)")
+    .select("id,card_id,total_amount,status")
     .eq("user_id", user.id)
     .eq("reference_month", currentMonth)
     .neq("status", "paga");
+
+  const cardIds = [...new Set((openInvoices ?? []).map((inv) => inv.card_id))];
+  const { data: invoiceCards } =
+    cardIds.length > 0
+      ? await supabase.from("cards").select("id,nickname").in("id", cardIds)
+      : { data: [] as { id: string; nickname: string }[] };
+  const cardNicknameById = Object.fromEntries(
+    (invoiceCards ?? []).map((c) => [c.id, c.nickname])
+  );
 
   const { data: externalDebts } = await supabase
     .from("external_debts")
@@ -54,9 +63,9 @@ export default async function DashboardPage() {
     .eq("status", "ativa");
 
   const recurringDebts = [
-    ...(openInvoices ?? []).map((inv: any) => ({
+    ...(openInvoices ?? []).map((inv) => ({
       id: inv.id,
-      name: `Fatura ${inv.cards?.nickname ?? "cartão"}`,
+      name: `Fatura ${cardNicknameById[inv.card_id] ?? "cartão"}`,
       amount: inv.total_amount,
       type: "cartao" as const,
     })),
