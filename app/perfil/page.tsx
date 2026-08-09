@@ -31,12 +31,28 @@ export default async function PerfilPage() {
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
+  const debtIds = (externalDebts ?? []).map((d) => d.id);
+  const { data: installmentRows } =
+    debtIds.length > 0
+      ? await supabase
+          .from("debt_installments")
+          .select("id,debt_id,installment_number,amount,due_date,is_paid")
+          .in("debt_id", debtIds)
+          .order("installment_number")
+      : { data: [] as any[] };
+
+  const installmentsByDebt: Record<string, typeof installmentRows> = {};
+  for (const row of installmentRows ?? []) {
+    (installmentsByDebt[row.debt_id] ??= []).push(row);
+  }
+
   return (
     <PerfilManager
       email={user.email ?? ""}
       monthlyIncome={profile?.monthly_income ?? 0}
       fixedExpenses={fixedExpenses ?? []}
       externalDebts={externalDebts ?? []}
+      installmentsByDebt={installmentsByDebt}
     />
   );
 }

@@ -12,12 +12,17 @@ export type MonthProjection = {
 export function buildCashFlowProjection({
   income,
   invoicesByMonth,
+  installmentsByMonth = [],
   recurringMonthly,
   monthsAhead = 6,
   startDate = new Date(),
 }: {
   income: number;
   invoicesByMonth: { referenceMonth: string; totalAmount: number; status: string }[];
+  // Parcelas de dívidas com cronograma próprio (debt_installments) — cada uma
+  // conta só no mês do seu vencimento, ao contrário de `recurringMonthly` que
+  // se repete todo mês (usado pra dívidas com parcela fixa simples).
+  installmentsByMonth?: { dueDate: string; amount: number }[];
   recurringMonthly: number;
   monthsAhead?: number;
   startDate?: Date;
@@ -32,13 +37,17 @@ export function buildCashFlowProjection({
       .filter((inv) => inv.status !== "paga" && inv.referenceMonth.slice(0, 7) === key)
       .reduce((sum, inv) => sum + inv.totalAmount, 0);
 
+    const installmentsTotal = installmentsByMonth
+      .filter((inst) => inst.dueDate.slice(0, 7) === key)
+      .reduce((sum, inst) => sum + inst.amount, 0);
+
     const rawLabel = monthDate.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "");
     const label = rawLabel.charAt(0).toUpperCase() + rawLabel.slice(1);
 
     months.push({
       month: label,
       income,
-      committed: invoicesTotal + recurringMonthly,
+      committed: invoicesTotal + installmentsTotal + recurringMonthly,
     });
   }
 

@@ -62,6 +62,34 @@ export default async function DashboardPage() {
     .eq("user_id", user.id)
     .eq("status", "ativa");
 
+  // Dívidas com cronograma próprio (debt_installments) usam o valor real da
+  // parcela do mês em vez do installment_amount fixo — algumas dívidas
+  // (financiamento com entrada, evolução de obra) têm parcela de valor
+  // variável mês a mês, que o campo fixo não representa.
+  const sixMonthsOut = addMonthsISO(currentMonth, 6);
+  const externalDebtIds = (externalDebts ?? []).map((d) => d.id);
+  const { data: debtInstallments } =
+    externalDebtIds.length > 0
+      ? await supabase
+          .from("debt_installments")
+          .select("debt_id,amount,due_date")
+          .in("debt_id", externalDebtIds)
+          .eq("is_paid", false)
+          .gte("due_date", currentMonth)
+          .lt("due_date", sixMonthsOut)
+      : { data: [] as { debt_id: string; amount: number; due_date: string }[] };
+
+  const debtIdsWithSchedule = new Set((debtInstallments ?? []).map((i) => i.debt_id));
+
+  function currentMonthDebtAmount(debt: { id: string; installment_amount: number | null }) {
+    if (debtIdsWithSchedule.has(debt.id)) {
+      return (debtInstallments ?? [])
+        .filter((i) => i.debt_id === debt.id && i.due_date.slice(0, 7) === currentMonth.slice(0, 7))
+        .reduce((sum, i) => sum + i.amount, 0);
+    }
+    return debt.installment_amount ?? 0;
+  }
+
   const recurringDebts = [
     ...(openInvoices ?? []).map((inv) => ({
       id: inv.id,
@@ -72,13 +100,12 @@ export default async function DashboardPage() {
     ...(externalDebts ?? []).map((d) => ({
       id: d.id,
       name: d.creditor_name,
-      amount: d.installment_amount ?? 0,
+      amount: currentMonthDebtAmount(d),
       type: "emprestimo" as const,
     })),
   ];
 
   // Projeção de fluxo de caixa: próximos 6 meses
-  const sixMonthsOut = addMonthsISO(currentMonth, 6);
   const { data: futureInvoices } = await supabase
     .from("invoices")
     .select("reference_month,total_amount,status")
@@ -88,7 +115,9 @@ export default async function DashboardPage() {
 
   const recurringMonthly =
     (fixedRows ?? []).reduce((sum, r) => sum + r.amount, 0) +
-    (externalDebts ?? []).reduce((sum, d) => sum + (d.installment_amount ?? 0), 0);
+    (externalDebts ?? [])
+      .filter((d) => !debtIdsWithSchedule.has(d.id))
+      .reduce((sum, d) => sum + (d.installment_amount ?? 0), 0);
 
   const projection = buildCashFlowProjection({
     income,
@@ -96,6 +125,10 @@ export default async function DashboardPage() {
       referenceMonth: inv.reference_month,
       totalAmount: inv.total_amount,
       status: inv.status,
+    })),
+    installmentsByMonth: (debtInstallments ?? []).map((i) => ({
+      dueDate: i.due_date,
+      amount: i.amount,
     })),
     recurringMonthly,
   });

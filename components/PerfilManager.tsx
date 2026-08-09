@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, Plus, Trash2, Wallet, Home, Landmark } from "lucide-react";
+import { LogOut, Plus, Trash2, Wallet, Home, Landmark, ChevronDown, ChevronUp, Check } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 
@@ -30,6 +30,20 @@ type ExternalDebt = {
   due_day: number | null;
   status: string;
 };
+
+type DebtInstallment = {
+  id: string;
+  debt_id: string;
+  installment_number: number;
+  amount: number;
+  due_date: string;
+  is_paid: boolean;
+};
+
+function formatDate(iso: string) {
+  const [year, month, day] = iso.split("-");
+  return `${day}/${month}/${year}`;
+}
 
 const FIXED_CATEGORIES = [
   { value: "moradia", label: "Moradia" },
@@ -65,11 +79,13 @@ export default function PerfilManager({
   monthlyIncome,
   fixedExpenses,
   externalDebts,
+  installmentsByDebt,
 }: {
   email: string;
   monthlyIncome: number;
   fixedExpenses: FixedExpense[];
   externalDebts: ExternalDebt[];
+  installmentsByDebt: Record<string, DebtInstallment[]>;
 }) {
   const router = useRouter();
   const supabase = createClient();
@@ -95,7 +111,7 @@ export default function PerfilManager({
 
       <RendaSection initialIncome={monthlyIncome} />
       <DespesasFixasSection expenses={fixedExpenses} />
-      <DividasExternasSection debts={externalDebts} />
+      <DividasExternasSection debts={externalDebts} installmentsByDebt={installmentsByDebt} />
     </main>
   );
 }
@@ -332,11 +348,18 @@ function DespesasFixasSection({ expenses }: { expenses: FixedExpense[] }) {
 // ---------------------------------------------------------------------------
 // Dívidas externas (empréstimos, financiamentos...)
 // ---------------------------------------------------------------------------
-function DividasExternasSection({ debts }: { debts: ExternalDebt[] }) {
+function DividasExternasSection({
+  debts,
+  installmentsByDebt,
+}: {
+  debts: ExternalDebt[];
+  installmentsByDebt: Record<string, DebtInstallment[]>;
+}) {
   const router = useRouter();
   const supabase = createClient();
   const showToast = useToast();
   const [formOpen, setFormOpen] = useState(false);
+  const [expandedDebtId, setExpandedDebtId] = useState<string | null>(null);
   const [creditorName, setCreditorName] = useState("");
   const [debtType, setDebtType] = useState("emprestimo_pessoal");
   const [originalPrincipal, setOriginalPrincipal] = useState("");
@@ -434,37 +457,61 @@ function DividasExternasSection({ debts }: { debts: ExternalDebt[] }) {
       </div>
 
       <ul className="space-y-2 mb-2">
-        {debts.map((debt) => (
-          <li key={debt.id} className="rounded-lg bg-base-100 p-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-body font-semibold text-sm text-ink-900">{debt.creditor_name}</p>
-                <p className="font-body text-xs text-ink-400">
-                  {formatBRL(debt.current_balance)} · {(debt.interest_rate_monthly * 100).toFixed(1)}% a.m.
-                </p>
+        {debts.map((debt) => {
+          const isExpanded = expandedDebtId === debt.id;
+          const installments = installmentsByDebt[debt.id] ?? [];
+          return (
+            <li key={debt.id} className="rounded-lg bg-base-100 p-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-body font-semibold text-sm text-ink-900">{debt.creditor_name}</p>
+                  <p className="font-body text-xs text-ink-400">
+                    {formatBRL(debt.current_balance)} · {(debt.interest_rate_monthly * 100).toFixed(1)}% a.m.
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleDelete(debt.id, debt.creditor_name)}
+                  disabled={busyId === debt.id}
+                  aria-label="Remover"
+                >
+                  <Trash2 size={14} className="text-ink-400" />
+                </button>
               </div>
-              <button
-                onClick={() => handleDelete(debt.id, debt.creditor_name)}
+              <select
+                value={debt.status}
+                onChange={(e) => handleStatusChange(debt.id, e.target.value)}
                 disabled={busyId === debt.id}
-                aria-label="Remover"
+                className="mt-2 rounded-lg border border-moss-200 px-2 py-1 font-body text-xs"
               >
-                <Trash2 size={14} className="text-ink-400" />
+                {DEBT_STATUS.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                onClick={() => setExpandedDebtId(isExpanded ? null : debt.id)}
+                className="w-full flex items-center justify-between mt-2 pt-2 border-t border-moss-200 font-body text-xs text-moss-700 font-semibold"
+              >
+                <span>
+                  Parcelas cadastradas{installments.length > 0 ? ` (${installments.length})` : ""}
+                </span>
+                {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
               </button>
-            </div>
-            <select
-              value={debt.status}
-              onChange={(e) => handleStatusChange(debt.id, e.target.value)}
-              disabled={busyId === debt.id}
-              className="mt-2 rounded-lg border border-moss-200 px-2 py-1 font-body text-xs"
-            >
-              {DEBT_STATUS.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </li>
-        ))}
+
+              {isExpanded && (
+                <ParcelasDaDivida
+                  debtId={debt.id}
+                  installments={installments}
+                  supabase={supabase}
+                  showToast={showToast}
+                  onChanged={() => router.refresh()}
+                />
+              )}
+            </li>
+          );
+        })}
         {debts.length === 0 && (
           <li className="font-body text-xs text-ink-400">Nenhuma dívida externa cadastrada ainda.</li>
         )}
@@ -552,5 +599,161 @@ function DividasExternasSection({ debts }: { debts: ExternalDebt[] }) {
         </form>
       )}
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Cronograma de parcelas de uma dívida — número, valor e vencimento próprios
+// (financiamentos com parcelas variáveis: entrada de imóvel, obra...)
+// ---------------------------------------------------------------------------
+function ParcelasDaDivida({
+  debtId,
+  installments,
+  supabase,
+  showToast,
+  onChanged,
+}: {
+  debtId: string;
+  installments: DebtInstallment[];
+  supabase: ReturnType<typeof createClient>;
+  showToast: (message: string, type?: "success" | "error") => void;
+  onChanged: () => void;
+}) {
+  const [number, setNumber] = useState(String(installments.length + 1));
+  const [amount, setAmount] = useState("");
+  const [dueDate, setDueDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    const numericAmount = parseFloat(amount.replace(",", ".")) || 0;
+    if (numericAmount <= 0 || !dueDate) return;
+
+    setSaving(true);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setSaving(false);
+      showToast("Sessão expirada — faça login novamente.", "error");
+      return;
+    }
+
+    const { error } = await supabase.from("debt_installments").insert({
+      user_id: user.id,
+      debt_id: debtId,
+      installment_number: Number(number) || installments.length + 1,
+      amount: numericAmount,
+      due_date: dueDate,
+    });
+
+    setSaving(false);
+    if (error) {
+      showToast("Erro ao adicionar parcela.", "error");
+      return;
+    }
+
+    setNumber(String(installments.length + 2));
+    setAmount("");
+    showToast("Parcela adicionada.");
+    onChanged();
+  }
+
+  async function handleTogglePaid(installment: DebtInstallment) {
+    setBusyId(installment.id);
+    const { error } = await supabase
+      .from("debt_installments")
+      .update({ is_paid: !installment.is_paid })
+      .eq("id", installment.id);
+    setBusyId(null);
+    if (error) {
+      showToast("Erro ao atualizar parcela.", "error");
+      return;
+    }
+    onChanged();
+  }
+
+  async function handleRemove(installmentId: string) {
+    setBusyId(installmentId);
+    const { error } = await supabase.from("debt_installments").delete().eq("id", installmentId);
+    setBusyId(null);
+    if (error) {
+      showToast("Erro ao remover parcela.", "error");
+      return;
+    }
+    showToast("Parcela removida.");
+    onChanged();
+  }
+
+  return (
+    <div className="mt-2 pt-2 space-y-2">
+      {installments.length === 0 && (
+        <p className="font-body text-xs text-ink-400">Nenhuma parcela cadastrada ainda.</p>
+      )}
+      <ul className="space-y-1">
+        {installments.map((inst) => (
+          <li key={inst.id} className="flex items-center justify-between font-body text-xs">
+            <button
+              onClick={() => handleTogglePaid(inst)}
+              disabled={busyId === inst.id}
+              className={`flex items-center gap-1.5 ${inst.is_paid ? "text-moss-700" : "text-ink-600"}`}
+            >
+              <span
+                className={`flex items-center justify-center w-4 h-4 rounded-full border ${
+                  inst.is_paid ? "bg-moss-500 border-moss-500" : "border-moss-200"
+                }`}
+              >
+                {inst.is_paid && <Check size={10} className="text-white" />}
+              </span>
+              Parcela {inst.installment_number} · {formatDate(inst.due_date)}
+            </button>
+            <span className="flex items-center gap-2">
+              <span className={inst.is_paid ? "text-ink-400 line-through" : "text-ink-900"}>
+                {formatBRL(inst.amount)}
+              </span>
+              <button
+                onClick={() => handleRemove(inst.id)}
+                disabled={busyId === inst.id}
+                aria-label="Remover parcela"
+              >
+                <Trash2 size={12} className="text-ink-400" />
+              </button>
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      <form onSubmit={handleAdd} className="grid grid-cols-3 gap-1.5 pt-1">
+        <input
+          value={number}
+          onChange={(e) => setNumber(e.target.value)}
+          type="number"
+          min={1}
+          placeholder="Nº"
+          className="rounded-lg border border-moss-200 px-2 py-1.5 font-body text-xs"
+        />
+        <input
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          inputMode="decimal"
+          placeholder="Valor"
+          className="rounded-lg border border-moss-200 px-2 py-1.5 font-body text-xs"
+        />
+        <input
+          value={dueDate}
+          onChange={(e) => setDueDate(e.target.value)}
+          type="date"
+          className="rounded-lg border border-moss-200 px-2 py-1.5 font-body text-xs"
+        />
+        <button
+          type="submit"
+          disabled={saving}
+          className="col-span-3 rounded-lg bg-moss-500 disabled:bg-moss-200 text-white font-body text-xs font-semibold py-1.5"
+        >
+          {saving ? "Salvando…" : "Adicionar parcela"}
+        </button>
+      </form>
+    </div>
   );
 }
