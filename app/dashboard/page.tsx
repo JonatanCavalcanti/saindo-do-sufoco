@@ -13,13 +13,26 @@ function addMonthsISO(referenceMonth: string, months: number): string {
   return firstDayOfMonth(d);
 }
 
-export default async function DashboardPage() {
+function parseSelectedMonth(param: string | undefined): string {
+  if (param && /^\d{4}-\d{2}$/.test(param)) return `${param}-01`;
+  return firstDayOfMonth(new Date());
+}
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ month?: string }>;
+}) {
+  const { month } = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   if (!user) redirect("/login");
+
+  const selectedMonth = parseSelectedMonth(month);
+  const todayMonth = firstDayOfMonth(new Date());
 
   const { data: profile } = await supabase
     .from("profiles")
@@ -38,16 +51,17 @@ export default async function DashboardPage() {
   const fixedExpenses = (fixedRows ?? []).filter((r) => r.category !== "assinatura");
   const subscriptions = (fixedRows ?? []).filter((r) => r.category === "assinatura");
 
-  const currentMonth = firstDayOfMonth(new Date());
-
-  const { data: openInvoices } = await supabase
+  // ---------------------------------------------------------------------
+  // Resumo do mês selecionado (navegável — não necessariamente o mês atual)
+  // ---------------------------------------------------------------------
+  const { data: monthInvoices } = await supabase
     .from("invoices")
     .select("id,card_id,total_amount,status")
     .eq("user_id", user.id)
-    .eq("reference_month", currentMonth)
+    .eq("reference_month", selectedMonth)
     .neq("status", "paga");
 
-  const cardIds = [...new Set((openInvoices ?? []).map((inv) => inv.card_id))];
+  const cardIds = [...new Set((monthInvoices ?? []).map((inv) => inv.card_id))];
   const { data: invoiceCards } =
     cardIds.length > 0
       ? await supabase.from("cards").select("id,nickname").in("id", cardIds)
@@ -62,36 +76,31 @@ export default async function DashboardPage() {
     .eq("user_id", user.id)
     .eq("status", "ativa");
 
-  // Dívidas com cronograma próprio (debt_installments) usam o valor real da
-  // parcela do mês em vez do installment_amount fixo — algumas dívidas
-  // (financiamento com entrada, evolução de obra) têm parcela de valor
-  // variável mês a mês, que o campo fixo não representa.
-  const sixMonthsOut = addMonthsISO(currentMonth, 6);
   const externalDebtIds = (externalDebts ?? []).map((d) => d.id);
-  const { data: debtInstallments } =
+  const nextMonthAfterSelected = addMonthsISO(selectedMonth, 1);
+  const { data: monthDebtInstallments } =
     externalDebtIds.length > 0
       ? await supabase
           .from("debt_installments")
           .select("debt_id,amount,due_date")
           .in("debt_id", externalDebtIds)
-          .eq("is_paid", false)
-          .gte("due_date", currentMonth)
-          .lt("due_date", sixMonthsOut)
+          .gte("due_date", selectedMonth)
+          .lt("due_date", nextMonthAfterSelected)
       : { data: [] as { debt_id: string; amount: number; due_date: string }[] };
 
-  const debtIdsWithSchedule = new Set((debtInstallments ?? []).map((i) => i.debt_id));
+  const debtIdsWithScheduleThisMonth = new Set((monthDebtInstallments ?? []).map((i) => i.debt_id));
 
-  function currentMonthDebtAmount(debt: { id: string; installment_amount: number | null }) {
-    if (debtIdsWithSchedule.has(debt.id)) {
-      return (debtInstallments ?? [])
-        .filter((i) => i.debt_id === debt.id && i.due_date.slice(0, 7) === currentMonth.slice(0, 7))
+  function monthDebtAmount(debt: { id: string; installment_amount: number | null }) {
+    if (debtIdsWithScheduleThisMonth.has(debt.id)) {
+      return (monthDebtInstallments ?? [])
+        .filter((i) => i.debt_id === debt.id)
         .reduce((sum, i) => sum + i.amount, 0);
     }
     return debt.installment_amount ?? 0;
   }
 
   const recurringDebts = [
-    ...(openInvoices ?? []).map((inv) => ({
+    ...(monthInvoices ?? []).map((inv) => ({
       id: inv.id,
       name: `Fatura ${cardNicknameById[inv.card_id] ?? "cartão"}`,
       amount: inv.total_amount,
@@ -100,23 +109,40 @@ export default async function DashboardPage() {
     ...(externalDebts ?? []).map((d) => ({
       id: d.id,
       name: d.creditor_name,
-      amount: currentMonthDebtAmount(d),
+      amount: monthDebtAmount(d),
       type: "emprestimo" as const,
     })),
   ];
 
-  // Projeção de fluxo de caixa: próximos 6 meses
+  // ---------------------------------------------------------------------
+  // Projeção de fluxo de caixa: sempre os próximos 6 meses a partir de hoje,
+  // independente do mês selecionado acima no resumo.
+  // ---------------------------------------------------------------------
+  const sixMonthsFromToday = addMonthsISO(todayMonth, 6);
   const { data: futureInvoices } = await supabase
     .from("invoices")
     .select("reference_month,total_amount,status")
     .eq("user_id", user.id)
-    .gte("reference_month", currentMonth)
-    .lt("reference_month", sixMonthsOut);
+    .gte("reference_month", todayMonth)
+    .lt("reference_month", sixMonthsFromToday);
+
+  const { data: futureDebtInstallments } =
+    externalDebtIds.length > 0
+      ? await supabase
+          .from("debt_installments")
+          .select("debt_id,amount,due_date")
+          .in("debt_id", externalDebtIds)
+          .eq("is_paid", false)
+          .gte("due_date", todayMonth)
+          .lt("due_date", sixMonthsFromToday)
+      : { data: [] as { debt_id: string; amount: number; due_date: string }[] };
+
+  const debtIdsWithAnyFutureSchedule = new Set((futureDebtInstallments ?? []).map((i) => i.debt_id));
 
   const recurringMonthly =
     (fixedRows ?? []).reduce((sum, r) => sum + r.amount, 0) +
     (externalDebts ?? [])
-      .filter((d) => !debtIdsWithSchedule.has(d.id))
+      .filter((d) => !debtIdsWithAnyFutureSchedule.has(d.id))
       .reduce((sum, d) => sum + (d.installment_amount ?? 0), 0);
 
   const projection = buildCashFlowProjection({
@@ -126,7 +152,7 @@ export default async function DashboardPage() {
       totalAmount: inv.total_amount,
       status: inv.status,
     })),
-    installmentsByMonth: (debtInstallments ?? []).map((i) => ({
+    installmentsByMonth: (futureDebtInstallments ?? []).map((i) => ({
       dueDate: i.due_date,
       amount: i.amount,
     })),
@@ -137,6 +163,7 @@ export default async function DashboardPage() {
     <DashboardClient
       data={{ income, fixedExpenses, subscriptions, recurringDebts }}
       projection={projection}
+      selectedMonth={selectedMonth}
     />
   );
 }

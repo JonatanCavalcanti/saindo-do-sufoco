@@ -2,7 +2,18 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Eye, EyeOff, Home, Repeat, Landmark, AlertTriangle, Info, ChevronRight } from "lucide-react";
+import { useRouter } from "next/navigation";
+import {
+  Eye,
+  EyeOff,
+  Home,
+  Repeat,
+  Landmark,
+  AlertTriangle,
+  Info,
+  ChevronRight,
+  ChevronLeft,
+} from "lucide-react";
 import CashFlowProjection from "@/components/CashFlowProjection";
 import type { MonthProjection } from "@/lib/cash-flow";
 
@@ -111,12 +122,65 @@ function RecurringBlock({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Navegação de mês — deixa o resumo (receita/despesas/dívidas) navegável pro
+// passado ou futuro, sem afetar a projeção de 6 meses (sempre a partir de hoje).
+// ---------------------------------------------------------------------------
+function MonthSelector({ selectedMonth }: { selectedMonth: string }) {
+  const router = useRouter();
+  const [year, month] = selectedMonth.split("-").map(Number);
+  const monthDate = new Date(year, month - 1, 1);
+  const rawLabel = monthDate.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  const label = rawLabel.charAt(0).toUpperCase() + rawLabel.slice(1);
+
+  const today = new Date();
+  const isCurrentMonth = today.getFullYear() === year && today.getMonth() === month - 1;
+
+  function go(offset: number) {
+    const d = new Date(year, month - 1 + offset, 1);
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    router.push(`/dashboard?month=${ym}`);
+  }
+
+  return (
+    <div className="flex items-center justify-between px-5 mb-4">
+      <button
+        onClick={() => go(-1)}
+        aria-label="Mês anterior"
+        className="p-2 rounded-full bg-white border border-moss-200 text-ink-600"
+      >
+        <ChevronLeft size={16} />
+      </button>
+      <div className="flex flex-col items-center">
+        <span className="font-body font-semibold text-sm text-ink-900">{label}</span>
+        {!isCurrentMonth && (
+          <button
+            onClick={() => router.push("/dashboard")}
+            className="font-body text-xs text-moss-700 underline underline-offset-2"
+          >
+            Voltar pro mês atual
+          </button>
+        )}
+      </div>
+      <button
+        onClick={() => go(1)}
+        aria-label="Próximo mês"
+        className="p-2 rounded-full bg-white border border-moss-200 text-ink-600"
+      >
+        <ChevronRight size={16} />
+      </button>
+    </div>
+  );
+}
+
 export default function DashboardClient({
   data,
   projection,
+  selectedMonth,
 }: {
   data: DashboardData;
   projection: MonthProjection[];
+  selectedMonth: string;
 }) {
   const [privacyMode, setPrivacyMode] = useState(false);
 
@@ -158,6 +222,8 @@ export default function DashboardClient({
           {privacyMode ? <EyeOff size={18} /> : <Eye size={18} />}
         </button>
       </header>
+
+      <MonthSelector selectedMonth={selectedMonth} />
 
       {/* Resumo mensal + Anel do Alívio */}
       <section className="px-5">
