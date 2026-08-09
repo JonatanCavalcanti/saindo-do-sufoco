@@ -31,6 +31,15 @@ export default async function PerfilPage() {
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
+  type InstallmentRow = {
+    id: string;
+    debt_id: string;
+    installment_number: number;
+    amount: number;
+    due_date: string;
+    is_paid: boolean;
+  };
+
   const debtIds = (externalDebts ?? []).map((d) => d.id);
   const { data: installmentRows } =
     debtIds.length > 0
@@ -39,10 +48,10 @@ export default async function PerfilPage() {
           .select("id,debt_id,installment_number,amount,due_date,is_paid")
           .in("debt_id", debtIds)
           .order("installment_number")
-      : { data: [] as any[] };
+      : { data: [] as InstallmentRow[] };
 
-  const installmentsByDebt: Record<string, typeof installmentRows> = {};
-  for (const row of installmentRows ?? []) {
+  const installmentsByDebt: Record<string, InstallmentRow[]> = {};
+  for (const row of (installmentRows ?? []) as InstallmentRow[]) {
     (installmentsByDebt[row.debt_id] ??= []).push(row);
   }
 
