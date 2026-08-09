@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, Plus, Trash2, Wallet, Home, Landmark, ChevronDown, ChevronUp, Check } from "lucide-react";
+import { LogOut, Plus, Trash2, Pencil, Wallet, Home, Landmark, ChevronDown, ChevronUp, Check, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 
@@ -184,6 +184,7 @@ function DespesasFixasSection({ expenses }: { expenses: FixedExpense[] }) {
   const supabase = createClient();
   const showToast = useToast();
   const [formOpen, setFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [category, setCategory] = useState("moradia");
   const [amount, setAmount] = useState("");
@@ -192,7 +193,40 @@ function DespesasFixasSection({ expenses }: { expenses: FixedExpense[] }) {
   const [saving, setSaving] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
-  async function handleAdd(e: React.FormEvent) {
+  function resetForm() {
+    setName("");
+    setCategory("moradia");
+    setAmount("");
+    setDueDay("");
+    setIsEssential(true);
+    setEditingId(null);
+  }
+
+  function openForNew() {
+    resetForm();
+    setFormOpen(true);
+  }
+
+  function toggleForm() {
+    if (formOpen) {
+      setFormOpen(false);
+      resetForm();
+    } else {
+      openForNew();
+    }
+  }
+
+  function openForEdit(item: FixedExpense) {
+    setEditingId(item.id);
+    setName(item.name);
+    setCategory(item.category);
+    setAmount(String(item.amount));
+    setDueDay(item.due_day ? String(item.due_day) : "");
+    setIsEssential(item.is_essential);
+    setFormOpen(true);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const numericAmount = parseFloat(amount.replace(",", ".")) || 0;
     if (!name || numericAmount <= 0) return;
@@ -207,27 +241,27 @@ function DespesasFixasSection({ expenses }: { expenses: FixedExpense[] }) {
       return;
     }
 
-    const { error } = await supabase.from("fixed_expenses").insert({
-      user_id: user.id,
+    const payload = {
       name,
       category,
       amount: numericAmount,
       due_day: dueDay ? Number(dueDay) : null,
       is_essential: isEssential,
-    });
+    };
+
+    const { error } = editingId
+      ? await supabase.from("fixed_expenses").update(payload).eq("id", editingId)
+      : await supabase.from("fixed_expenses").insert({ user_id: user.id, ...payload });
 
     setSaving(false);
     if (error) {
-      showToast("Erro ao adicionar despesa.", "error");
+      showToast(editingId ? "Erro ao salvar alterações." : "Erro ao adicionar despesa.", "error");
       return;
     }
 
-    setName("");
-    setAmount("");
-    setDueDay("");
-    setIsEssential(true);
+    resetForm();
     setFormOpen(false);
-    showToast("Despesa adicionada.");
+    showToast(editingId ? "Despesa atualizada." : "Despesa adicionada.");
     router.refresh();
   }
 
@@ -252,10 +286,10 @@ function DespesasFixasSection({ expenses }: { expenses: FixedExpense[] }) {
           <h2 className="font-body font-semibold text-sm text-ink-900">Despesas fixas</h2>
         </div>
         <button
-          onClick={() => setFormOpen((v) => !v)}
+          onClick={toggleForm}
           className="flex items-center gap-1 text-moss-700 font-body text-xs font-semibold"
         >
-          <Plus size={14} /> Adicionar
+          {formOpen ? <X size={14} /> : <Plus size={14} />} {formOpen ? "Fechar" : "Adicionar"}
         </button>
       </div>
 
@@ -268,6 +302,9 @@ function DespesasFixasSection({ expenses }: { expenses: FixedExpense[] }) {
             </span>
             <span className="flex items-center gap-2">
               {formatBRL(item.amount)}
+              <button onClick={() => openForEdit(item)} aria-label="Editar">
+                <Pencil size={13} className="text-ink-400" />
+              </button>
               <button
                 onClick={() => handleRemove(item.id, item.name)}
                 disabled={removingId === item.id}
@@ -284,7 +321,7 @@ function DespesasFixasSection({ expenses }: { expenses: FixedExpense[] }) {
       </ul>
 
       {formOpen && (
-        <form onSubmit={handleAdd} className="space-y-2 pt-2 border-t border-moss-200">
+        <form onSubmit={handleSubmit} className="space-y-2 pt-2 border-t border-moss-200">
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -337,7 +374,7 @@ function DespesasFixasSection({ expenses }: { expenses: FixedExpense[] }) {
             disabled={saving}
             className="w-full rounded-lg bg-moss-500 disabled:bg-moss-200 text-white font-body font-semibold text-sm py-2"
           >
-            {saving ? "Salvando…" : "Salvar despesa"}
+            {saving ? "Salvando…" : editingId ? "Salvar alterações" : "Salvar despesa"}
           </button>
         </form>
       )}
@@ -359,6 +396,7 @@ function DividasExternasSection({
   const supabase = createClient();
   const showToast = useToast();
   const [formOpen, setFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedDebtId, setExpandedDebtId] = useState<string | null>(null);
   const [creditorName, setCreditorName] = useState("");
   const [debtType, setDebtType] = useState("emprestimo_pessoal");
@@ -371,7 +409,42 @@ function DividasExternasSection({
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  async function handleAdd(e: React.FormEvent) {
+  function resetDebtForm() {
+    setCreditorName("");
+    setDebtType("emprestimo_pessoal");
+    setOriginalPrincipal("");
+    setCurrentBalance("");
+    setInterestRate("");
+    setInstallmentAmount("");
+    setInstallmentsTotal("");
+    setDueDay("");
+    setEditingId(null);
+  }
+
+  function toggleForm() {
+    if (formOpen) {
+      setFormOpen(false);
+      resetDebtForm();
+    } else {
+      resetDebtForm();
+      setFormOpen(true);
+    }
+  }
+
+  function openForEdit(debt: ExternalDebt) {
+    setEditingId(debt.id);
+    setCreditorName(debt.creditor_name);
+    setDebtType(debt.debt_type);
+    setOriginalPrincipal(String(debt.original_principal));
+    setCurrentBalance(String(debt.current_balance));
+    setInterestRate(String(debt.interest_rate_monthly * 100));
+    setInstallmentAmount(debt.installment_amount ? String(debt.installment_amount) : "");
+    setInstallmentsTotal(debt.installments_total ? String(debt.installments_total) : "");
+    setDueDay(debt.due_day ? String(debt.due_day) : "");
+    setFormOpen(true);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const numericBalance = parseFloat(currentBalance.replace(",", ".")) || 0;
     if (!creditorName || numericBalance <= 0) return;
@@ -386,8 +459,7 @@ function DividasExternasSection({
       return;
     }
 
-    const { error } = await supabase.from("external_debts").insert({
-      user_id: user.id,
+    const payload = {
       creditor_name: creditorName,
       debt_type: debtType,
       original_principal: parseFloat(originalPrincipal.replace(",", ".")) || numericBalance,
@@ -396,23 +468,21 @@ function DividasExternasSection({
       installment_amount: installmentAmount ? parseFloat(installmentAmount.replace(",", ".")) : null,
       installments_total: installmentsTotal ? Number(installmentsTotal) : null,
       due_day: dueDay ? Number(dueDay) : null,
-    });
+    };
+
+    const { error } = editingId
+      ? await supabase.from("external_debts").update(payload).eq("id", editingId)
+      : await supabase.from("external_debts").insert({ user_id: user.id, ...payload });
 
     setSaving(false);
     if (error) {
-      showToast("Erro ao adicionar dívida.", "error");
+      showToast(editingId ? "Erro ao salvar alterações." : "Erro ao adicionar dívida.", "error");
       return;
     }
 
-    setCreditorName("");
-    setOriginalPrincipal("");
-    setCurrentBalance("");
-    setInterestRate("");
-    setInstallmentAmount("");
-    setInstallmentsTotal("");
-    setDueDay("");
+    resetDebtForm();
     setFormOpen(false);
-    showToast("Dívida adicionada.");
+    showToast(editingId ? "Dívida atualizada." : "Dívida adicionada.");
     router.refresh();
   }
 
@@ -449,10 +519,10 @@ function DividasExternasSection({
           <h2 className="font-body font-semibold text-sm text-ink-900">Dívidas externas</h2>
         </div>
         <button
-          onClick={() => setFormOpen((v) => !v)}
+          onClick={toggleForm}
           className="flex items-center gap-1 text-moss-700 font-body text-xs font-semibold"
         >
-          <Plus size={14} /> Adicionar
+          {formOpen ? <X size={14} /> : <Plus size={14} />} {formOpen ? "Fechar" : "Adicionar"}
         </button>
       </div>
 
@@ -469,13 +539,18 @@ function DividasExternasSection({
                     {formatBRL(debt.current_balance)} · {(debt.interest_rate_monthly * 100).toFixed(1)}% a.m.
                   </p>
                 </div>
-                <button
-                  onClick={() => handleDelete(debt.id, debt.creditor_name)}
-                  disabled={busyId === debt.id}
-                  aria-label="Remover"
-                >
-                  <Trash2 size={14} className="text-ink-400" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => openForEdit(debt)} aria-label="Editar">
+                    <Pencil size={14} className="text-ink-400" />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(debt.id, debt.creditor_name)}
+                    disabled={busyId === debt.id}
+                    aria-label="Remover"
+                  >
+                    <Trash2 size={14} className="text-ink-400" />
+                  </button>
+                </div>
               </div>
               <select
                 value={debt.status}
@@ -518,7 +593,7 @@ function DividasExternasSection({
       </ul>
 
       {formOpen && (
-        <form onSubmit={handleAdd} className="space-y-2 pt-2 border-t border-moss-200">
+        <form onSubmit={handleSubmit} className="space-y-2 pt-2 border-t border-moss-200">
           <input
             value={creditorName}
             onChange={(e) => setCreditorName(e.target.value)}
@@ -594,7 +669,7 @@ function DividasExternasSection({
             disabled={saving}
             className="w-full rounded-lg bg-moss-500 disabled:bg-moss-200 text-white font-body font-semibold text-sm py-2"
           >
-            {saving ? "Salvando…" : "Salvar dívida"}
+            {saving ? "Salvando…" : editingId ? "Salvar alterações" : "Salvar dívida"}
           </button>
         </form>
       )}
@@ -624,8 +699,23 @@ function ParcelasDaDivida({
   const [dueDate, setDueDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
-  async function handleAdd(e: React.FormEvent) {
+  function resetForm() {
+    setNumber(String(installments.length + 1));
+    setAmount("");
+    setDueDate(new Date().toISOString().slice(0, 10));
+    setEditingId(null);
+  }
+
+  function openForEdit(inst: DebtInstallment) {
+    setEditingId(inst.id);
+    setNumber(String(inst.installment_number));
+    setAmount(String(inst.amount));
+    setDueDate(inst.due_date);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const numericAmount = parseFloat(amount.replace(",", ".")) || 0;
     if (numericAmount <= 0 || !dueDate) return;
@@ -640,23 +730,24 @@ function ParcelasDaDivida({
       return;
     }
 
-    const { error } = await supabase.from("debt_installments").insert({
-      user_id: user.id,
-      debt_id: debtId,
+    const payload = {
       installment_number: Number(number) || installments.length + 1,
       amount: numericAmount,
       due_date: dueDate,
-    });
+    };
+
+    const { error } = editingId
+      ? await supabase.from("debt_installments").update(payload).eq("id", editingId)
+      : await supabase.from("debt_installments").insert({ user_id: user.id, debt_id: debtId, ...payload });
 
     setSaving(false);
     if (error) {
-      showToast("Erro ao adicionar parcela.", "error");
+      showToast(editingId ? "Erro ao salvar parcela." : "Erro ao adicionar parcela.", "error");
       return;
     }
 
-    setNumber(String(installments.length + 2));
-    setAmount("");
-    showToast("Parcela adicionada.");
+    resetForm();
+    showToast(editingId ? "Parcela atualizada." : "Parcela adicionada.");
     onChanged();
   }
 
@@ -712,6 +803,9 @@ function ParcelasDaDivida({
               <span className={inst.is_paid ? "text-ink-400 line-through" : "text-ink-900"}>
                 {formatBRL(inst.amount)}
               </span>
+              <button onClick={() => openForEdit(inst)} aria-label="Editar parcela">
+                <Pencil size={12} className="text-ink-400" />
+              </button>
               <button
                 onClick={() => handleRemove(inst.id)}
                 disabled={busyId === inst.id}
@@ -724,7 +818,7 @@ function ParcelasDaDivida({
         ))}
       </ul>
 
-      <form onSubmit={handleAdd} className="grid grid-cols-3 gap-1.5 pt-1">
+      <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-1.5 pt-1">
         <input
           value={number}
           onChange={(e) => setNumber(e.target.value)}
@@ -749,10 +843,21 @@ function ParcelasDaDivida({
         <button
           type="submit"
           disabled={saving}
-          className="col-span-3 rounded-lg bg-moss-500 disabled:bg-moss-200 text-white font-body text-xs font-semibold py-1.5"
+          className={`rounded-lg bg-moss-500 disabled:bg-moss-200 text-white font-body text-xs font-semibold py-1.5 ${
+            editingId ? "col-span-2" : "col-span-3"
+          }`}
         >
-          {saving ? "Salvando…" : "Adicionar parcela"}
+          {saving ? "Salvando…" : editingId ? "Salvar parcela" : "Adicionar parcela"}
         </button>
+        {editingId && (
+          <button
+            type="button"
+            onClick={resetForm}
+            className="rounded-lg border border-moss-200 text-ink-600 font-body text-xs font-semibold py-1.5"
+          >
+            Cancelar
+          </button>
+        )}
       </form>
     </div>
   );
