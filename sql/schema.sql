@@ -164,6 +164,23 @@ create table public.rescue_plan_snapshots (
   created_at timestamptz not null default now()
 );
 
+-- ----------------------------------------------------------------------------
+-- 10. DEBT_INSTALLMENTS — cronograma parcela-a-parcela de uma dívida externa
+--     (financiamentos com parcelas de valor variável, ex: entrada de imóvel,
+--     evolução de obra — cada parcela tem seu próprio valor e vencimento,
+--     diferente do modelo simples de installment_amount fixo em external_debts)
+-- ----------------------------------------------------------------------------
+create table public.debt_installments (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  debt_id uuid not null references public.external_debts(id) on delete cascade,
+  installment_number smallint not null,
+  amount numeric(12,2) not null,
+  due_date date not null,
+  is_paid boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
 -- ============================================================================
 -- ÍNDICES
 -- ============================================================================
@@ -175,6 +192,7 @@ create index idx_purchases_card on public.purchases(card_id);
 create index idx_transactions_invoice on public.transactions(invoice_id);
 create index idx_transactions_purchase on public.transactions(purchase_id);
 create index idx_pdf_imports_user on public.pdf_imports(user_id);
+create index idx_debt_installments_debt on public.debt_installments(debt_id);
 
 -- ============================================================================
 -- ROW LEVEL SECURITY — política padrão "owner-only" em todas as tabelas
@@ -188,6 +206,7 @@ alter table public.purchases enable row level security;
 alter table public.transactions enable row level security;
 alter table public.pdf_imports enable row level security;
 alter table public.rescue_plan_snapshots enable row level security;
+alter table public.debt_installments enable row level security;
 
 -- profiles: id == auth.uid()
 create policy "profiles_owner" on public.profiles
@@ -209,6 +228,8 @@ create policy "transactions_owner" on public.transactions
 create policy "pdf_imports_owner" on public.pdf_imports
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "rescue_plan_owner" on public.rescue_plan_snapshots
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "debt_installments_owner" on public.debt_installments
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ============================================================================
