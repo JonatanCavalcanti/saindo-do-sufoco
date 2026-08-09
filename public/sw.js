@@ -12,7 +12,7 @@
 // IndexedDB e sincroniza quando a conexão volta — o service worker aqui cuida
 // só de leitura/cache de navegação.
 
-const CACHE_NAME = "sufoco-shell-v1";
+const CACHE_NAME = "sufoco-shell-v2";
 const APP_SHELL = ["/dashboard", "/cartoes", "/plano-de-resgate", "/faturas/importar", "/offline", "/manifest.json"];
 
 self.addEventListener("install", (event) => {
@@ -36,8 +36,14 @@ self.addEventListener("fetch", (event) => {
 
   if (request.method !== "GET") return; // POST/PUT (ex: /api/purchases) não passam pelo cache
 
+  // Requests internas do App Router (RSC): o Next usa isso para buscar dado
+  // fresco em router.refresh() e navegação por <Link>. Cachear aqui fazia
+  // telas mostrarem dado velho depois de salvar algo, até um reload manual
+  // completo — mesmo bug de fundo do "preciso atualizar pra ver a mudança".
+  const isRSCRequest = request.headers.get("RSC") === "1" || url.searchParams.has("_rsc");
+
   // Dados de API: sempre tenta rede primeiro, sem cache de valores financeiros
-  if (url.pathname.startsWith("/api/") || url.hostname.includes("supabase.co")) {
+  if (url.pathname.startsWith("/api/") || url.hostname.includes("supabase.co") || isRSCRequest) {
     event.respondWith(
       fetch(request).catch(() =>
         new Response(JSON.stringify({ error: "Sem conexão no momento." }), {
